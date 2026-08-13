@@ -1,0 +1,25 @@
+{
+  "name": "scriber",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Practise dictating exam answers to a writer, under NESA exam-provision scribe rules.",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "npm run dev --workspace server",
+    "dev:client": "npm run dev --workspace client",
+    "build": "npm run build --workspace client && npm run build --workspace server",
+    "start": "npm run start --workspace server",
+    "test": "npm run test --workspace client",
+    "typecheck": "npm run typecheck --workspace client && npm run typecheck --workspace server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

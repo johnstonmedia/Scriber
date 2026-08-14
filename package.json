@@ -2,24 +2,37 @@
   "name": "scriber",
   "private": true,
   "version": "1.0.0",
-  "description": "Practise dictating exam answers to a writer, under NESA exam-provision scribe rules.",
-  "workspaces": [
-    "client",
-    "server"
-  ],
+  "type": "module",
   "scripts": {
-    "dev": "concurrently -n api,web -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
-    "dev:server": "npm run dev --workspace server",
-    "dev:client": "npm run dev --workspace client",
-    "build": "npm run build --workspace client && npm run build --workspace server",
-    "start": "npm run start --workspace server",
-    "test": "npm run test --workspace client",
-    "typecheck": "npm run typecheck --workspace client && npm run typecheck --workspace server"
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "tsx --test src/**/*.test.ts",
+    "typecheck": "tsc -b --noEmit",
+    "lint": "oxlint",
+    "emulators": "firebase emulators:start",
+    "deploy": "npm run build && firebase deploy",
+    "test:rules": "node scripts/rules-check.mjs",
+    "e2e": "node scripts/e2e.mjs"
+  },
+  "dependencies": {
+    "firebase": "^12.17.1",
+    "pdfjs-dist": "^6.2.108",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "firebase-tools": "^15.27.0",
+    "oxlint": "^1.75.0",
+    "playwright": "^1.62.1",
+    "tsx": "^4.23.12",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0"
   },
-  "engines": {
-    "node": ">=20"
-  }
+  "description": "Practise dictating exam answers to a writer, under NESA exam-provision scribe rules."
 }

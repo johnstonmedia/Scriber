@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as pdfjs from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
-import { api, type Paper } from '../lib/api'
+import type { Paper } from '../lib/data'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -10,9 +10,11 @@ type Props = { paper: Paper }
 /**
  * Renders the uploaded exam paper beside the answer sheet. PDFs are drawn page
  * by page onto canvases; images and text files get a simpler treatment.
+ *
+ * The source is the Storage download URL, which carries its own access token,
+ * so it can be handed straight to pdf.js and <img>.
  */
 export function PaperViewer({ paper }: Props) {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pageCount, setPageCount] = useState(0)
   const [scale, setScale] = useState(1.25)
@@ -20,46 +22,24 @@ export function PaperViewer({ paper }: Props) {
   const stageRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    let url: string | null = null
+    if (paper.mimeType !== 'text/plain') return
     let cancelled = false
-
-    api
-      .paperBlobUrl(paper)
-      .then((created) => {
-        if (cancelled) {
-          URL.revokeObjectURL(created)
-          return
-        }
-        url = created
-        setBlobUrl(created)
-      })
-      .catch((err: Error) => !cancelled && setError(err.message))
-
-    return () => {
-      cancelled = true
-      if (url) URL.revokeObjectURL(url)
-    }
-  }, [paper])
-
-  useEffect(() => {
-    if (!blobUrl || paper.mimeType !== 'text/plain') return
-    let cancelled = false
-    fetch(blobUrl)
-      .then((r) => r.text())
+    fetch(paper.downloadUrl)
+      .then((response) => response.text())
       .then((text) => !cancelled && setTextContent(text))
       .catch(() => !cancelled && setError('Could not read that file.'))
     return () => {
       cancelled = true
     }
-  }, [blobUrl, paper.mimeType])
+  }, [paper.downloadUrl, paper.mimeType])
 
   useEffect(() => {
-    if (!blobUrl || paper.mimeType !== 'application/pdf') return
+    if (paper.mimeType !== 'application/pdf') return
     const stage = stageRef.current
     if (!stage) return
 
     let cancelled = false
-    const task = pdfjs.getDocument({ url: blobUrl })
+    const task = pdfjs.getDocument({ url: paper.downloadUrl })
 
     task.promise
       .then(async (pdf) => {
@@ -89,7 +69,7 @@ export function PaperViewer({ paper }: Props) {
       cancelled = true
       void task.destroy()
     }
-  }, [blobUrl, paper.mimeType, scale])
+  }, [paper.downloadUrl, paper.mimeType, scale])
 
   if (error) {
     return (
@@ -97,10 +77,6 @@ export function PaperViewer({ paper }: Props) {
         <div className="alert alert-error">{error}</div>
       </div>
     )
-  }
-
-  if (!blobUrl) {
-    return <div style={{ padding: 24 }} className="muted small">Opening {paper.title}…</div>
   }
 
   return (
@@ -132,7 +108,7 @@ export function PaperViewer({ paper }: Props) {
             </button>
           </>
         )}
-        <a className="btn btn-sm" href={blobUrl} target="_blank" rel="noreferrer">
+        <a className="btn btn-sm" href={paper.downloadUrl} target="_blank" rel="noreferrer">
           Open
         </a>
       </div>
@@ -141,7 +117,7 @@ export function PaperViewer({ paper }: Props) {
 
       {paper.mimeType.startsWith('image/') && (
         <div className="pdf-stage">
-          <img src={blobUrl} alt={paper.title} className="pdf-page" />
+          <img src={paper.downloadUrl} alt={paper.title} className="pdf-page" />
         </div>
       )}
 

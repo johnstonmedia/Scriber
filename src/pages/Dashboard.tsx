@@ -1,15 +1,26 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { api, type AttemptSummary, type Paper } from '../lib/api'
 import { useAuth } from '../lib/auth'
+import {
+  createPaper,
+  deletePaper as removePaper,
+  listAttempts,
+  listPapers,
+  type Attempt,
+  type Paper,
+} from '../lib/data'
 
 const relative = (iso: string) => {
   const diff = Date.now() - new Date(iso).getTime()
   const days = Math.floor(diff / 86_400_000)
-  if (days === 0) return 'Today'
+  if (days <= 0) return 'Today'
   if (days === 1) return 'Yesterday'
   if (days < 7) return `${days} days ago`
-  return new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })
+  return new Date(iso).toLocaleDateString('en-AU', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  })
 }
 
 const minutes = (ms: number) => `${Math.max(1, Math.round(ms / 60_000))} min`
@@ -18,53 +29,76 @@ export function Dashboard() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const [papers, setPapers] = useState<Paper[]>([])
-  const [attempts, setAttempts] = useState<AttemptSummary[]>([])
+  const [attempts, setAttempts] = useState<Attempt[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [uploading, setUploading] = useState(false)
+  const [progress, setProgress] = useState<number | null>(null)
   const [showUpload, setShowUpload] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
+    if (!user) return
     try {
-      const [{ papers }, { attempts }] = await Promise.all([api.papers(), api.attempts()])
-      setPapers(papers)
-      setAttempts(attempts)
+      const [nextPapers, nextAttempts] = await Promise.all([
+        listPapers(user.uid),
+        listAttempts(user.uid),
+      ])
+      setPapers(nextPapers)
+      setAttempts(nextAttempts)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load your library.')
     }
-  }
+  }, [user])
 
   useEffect(() => {
     void refresh()
-  }, [])
+  }, [refresh])
 
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    // Hold onto the element — React clears currentTarget once the handler yields.
+    if (!user) return
+    // Hold the element — React clears currentTarget once the handler yields.
     const element = event.currentTarget
     const form = new FormData(element)
-    if (!(form.get('file') as File)?.size) {
+    const file = form.get('file') as File | null
+    if (!file?.size) {
       setError('Choose a file first.')
       return
     }
-    setUploading(true)
+
     setError(null)
+    setProgress(0)
     try {
-      await api.uploadPaper(form)
+      const year = Number(form.get('year'))
+      await createPaper(
+        user.uid,
+        file,
+        {
+          title: String(form.get('title') || '').trim() || file.name.replace(/\.[^.]+$/, ''),
+          subject: String(form.get('subject') || '').trim() || undefined,
+          year: Number.isFinite(year) && year > 0 ? year : undefined,
+          readingMinutes: Number(form.get('readingMinutes') ?? 10),
+          workingMinutes: Number(form.get('workingMinutes') ?? 120),
+        },
+        setProgress,
+      )
       element.reset()
       setShowUpload(false)
       await refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed.')
     } finally {
-      setUploading(false)
+      setProgress(null)
     }
   }
 
   async function remove(paper: Paper) {
+    if (!user) return
     if (!confirm(`Delete "${paper.title}"? Your practice sessions will be kept.`)) return
-    await api.deletePaper(paper.id).catch(() => setError('Could not delete that paper.'))
-    await refresh()
+    try {
+      await removePaper(user.uid, paper)
+      await refresh()
+    } catch {
+      setError('Could not delete that paper.')
+    }
   }
 
   const firstName = user?.name.split(' ')[0] ?? 'there'
@@ -86,15 +120,29 @@ export function Dashboard() {
         </button>
       </div>
 
-      {error && <div className="alert alert-error" style={{ marginBottom: 16 }}>{error}</div>}
+      {error && (
+        <div className="alert alert-error" style={{ marginBottom: 16 }}>
+          {error}
+        </div>
+      )}
 
       {showUpload && (
         <form className="card card-pad stack gap-3" style={{ marginBottom: 24 }} onSubmit={upload}>
           <h2>New exam paper</h2>
-          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+          <div
+            className="grid"
+            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}
+          >
             <div className="field">
               <label htmlFor="file">Paper file (PDF, image or text)</label>
-              <input id="file" name="file" type="file" className="input" ref={fileRef} accept=".pdf,.png,.jpg,.jpeg,.webp,.txt" required />
+              <input
+                id="file"
+                name="file"
+                type="file"
+                className="input"
+                accept=".pdf,.png,.jpg,.jpeg,.webp,.txt"
+                required
+              />
             </div>
             <div className="field">
               <label htmlFor="title">Title</label>
@@ -117,9 +165,16 @@ export function Dashboard() {
               <input id="workingMinutes" name="workingMinutes" className="input" type="number" min={1} max={600} defaultValue={120} />
             </div>
           </div>
+
+          {progress !== null && (
+            <div className="level-meter" style={{ width: '100%' }} aria-label="Upload progress">
+              <div style={{ width: `${Math.round(progress * 100)}%` }} />
+            </div>
+          )}
+
           <div className="row gap-2">
-            <button className="btn btn-primary" disabled={uploading}>
-              {uploading ? 'Uploading…' : 'Add paper'}
+            <button className="btn btn-primary" disabled={progress !== null}>
+              {progress !== null ? `Uploading ${Math.round(progress * 100)}%` : 'Add paper'}
             </button>
             <button type="button" className="btn btn-ghost" onClick={() => setShowUpload(false)}>
               Cancel
@@ -186,10 +241,12 @@ export function Dashboard() {
                   <strong>{attempt.title}</strong>
                   <div className="small muted">
                     {relative(attempt.createdAt)} · {minutes(attempt.durationMs)} ·{' '}
-                    {String((attempt.stats as { words?: number }).words ?? 0)} words
+                    {attempt.stats.words ?? 0} words
                   </div>
                 </div>
-                {attempt.status === 'in_progress' && <span className="badge badge-warn">Unfinished</span>}
+                {attempt.status === 'in_progress' && (
+                  <span className="badge badge-warn">Unfinished</span>
+                )}
                 <span className="badge">
                   {attempt.ruleProfile === 'strict' ? 'Strict' : 'Assisted'}
                 </span>

@@ -159,10 +159,7 @@ export function Settings() {
               onBlur={() => name.trim() && name !== user?.name && void updateName(name.trim())}
             />
           </div>
-          <p className="small muted">
-            Signed in as {user?.email}
-            {user?.linkedGoogle && ' · Google connected'}
-          </p>
+          <p className="small muted">Signed in as {user?.email}</p>
         </section>
 
         <section className="card card-pad">

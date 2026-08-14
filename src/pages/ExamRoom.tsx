@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { api, type Attempt, type Paper } from '../lib/api'
 import { useAuth } from '../lib/auth'
+import { createAttempt, getPaper, saveAttempt, type Paper } from '../lib/data'
 import { CommandDrawer } from '../components/CommandReference'
 import { PaperViewer } from '../components/PaperViewer'
 import { Dictation, readAloud, speechRecognitionSupported } from '../scribe/speech'
@@ -30,11 +30,11 @@ const format = (ms: number) => {
 export function ExamRoom() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
-  const { settings } = useAuth()
+  const { user, settings } = useAuth()
 
   const paperId = params.get('paper')
   const [paper, setPaper] = useState<Paper | null>(null)
-  const [attempt, setAttempt] = useState<Attempt | null>(null)
+  const [attemptId, setAttemptId] = useState<string | null>(null)
 
   const [scribe, setScribe] = useState<ScribeState>(createState)
   const [interim, setInterim] = useState('')
@@ -67,12 +67,11 @@ export function ExamRoom() {
   // ------------------------------------------------------------------- load
 
   useEffect(() => {
-    if (!paperId) return
-    api
-      .papers()
-      .then(({ papers }) => setPaper(papers.find((p) => p.id === paperId) ?? null))
+    if (!paperId || !user) return
+    getPaper(user.uid, paperId)
+      .then(setPaper)
       .catch(() => setNotice('Could not load that paper.'))
-  }, [paperId])
+  }, [paperId, user])
 
   // -------------------------------------------------------------- the clock
 
@@ -166,37 +165,40 @@ export function ExamRoom() {
 
   const saveTimer = useRef<number | null>(null)
   useEffect(() => {
-    if (!attempt || phase === 'setup' || phase === 'finished') return
+    if (!attemptId || !user || phase === 'setup' || phase === 'finished') return
     if (saveTimer.current) window.clearTimeout(saveTimer.current)
     saveTimer.current = window.setTimeout(() => {
-      void api
-        .updateAttempt(attempt.id, {
-          answerText,
-          atoms: scribe.atoms,
-          stats: scribe.stats,
-          log: logRef.current,
-          durationMs: Date.now() - startedAt.current,
-        })
-        .catch(() => setNotice('Your work could not be saved just now. It is still on screen.'))
+      void saveAttempt(user.uid, attemptId, {
+        answerText,
+        atoms: scribe.atoms,
+        stats: scribe.stats,
+        log: logRef.current,
+        durationMs: Date.now() - startedAt.current,
+      }).catch(() =>
+        setNotice('Your work could not be saved just now. It is still on screen.'),
+      )
     }, 2000)
     return () => {
       if (saveTimer.current) window.clearTimeout(saveTimer.current)
     }
-  }, [answerText, scribe, attempt, phase])
+  }, [answerText, scribe, attemptId, user, phase])
 
   // ---------------------------------------------------------------- actions
 
   async function beginSession(skipReading: boolean) {
     startedAt.current = Date.now()
-    try {
-      const { attempt: created } = await api.createAttempt({
-        paperId: paper?.id ?? null,
-        title: paper?.title ?? 'Free practice',
-        ruleProfile: settings.ruleProfile,
-      })
-      setAttempt(created)
-    } catch {
-      setNotice('Working offline — this session will not be saved to your history.')
+    if (user) {
+      try {
+        setAttemptId(
+          await createAttempt(user.uid, {
+            paperId: paper?.id ?? null,
+            title: paper?.title ?? 'Free practice',
+            ruleProfile: settings.ruleProfile,
+          }),
+        )
+      } catch {
+        setNotice('Working offline — this session will not be saved to your history.')
+      }
     }
     if (skipReading || readingMs === 0) {
       phaseEndsAt.current = Date.now() + workingMs
@@ -235,12 +237,12 @@ export function ExamRoom() {
     dictation.current?.stop()
     readAloud.stop()
     setPhase('finished')
-    if (!attempt) {
-      setNotice('This session was not saved because the server was unreachable.')
+    if (!attemptId || !user) {
+      setNotice('This session was not saved because Firebase was unreachable.')
       return
     }
     try {
-      await api.updateAttempt(attempt.id, {
+      await saveAttempt(user.uid, attemptId, {
         answerText,
         atoms: scribe.atoms,
         stats: scribe.stats,
@@ -248,7 +250,7 @@ export function ExamRoom() {
         durationMs: Date.now() - startedAt.current,
         status: 'finished',
       })
-      navigate(`/sessions/${attempt.id}`)
+      navigate(`/sessions/${attemptId}`)
     } catch {
       setNotice('Could not save the finished session. Copy your answer before leaving.')
     }

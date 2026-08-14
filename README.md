@@ -63,149 +63,144 @@ The full list, with alternative phrasings, is in the app under **What to say**.
 
 ---
 
-## Running it
-
-Requires Node 20+.
-
-```bash
-npm install          # installs both workspaces
-npm run dev          # API on :4000, web app on :5173
-```
-
-Open http://localhost:5173 and create an account.
-
-## Deploying
-
-The server serves the built client from `client/dist`, so one process runs the
-whole app on `PORT`.
-
-**Scriber needs a persistent disk.** Accounts, the SQLite database and every
-uploaded paper live under `DATA_DIR`. Serverless hosts that discard the
-filesystem between requests — Vercel and Netlify functions among them — will
-lose all of it, so pick a host that offers a real volume: Fly.io, Railway,
-Render, a VPS, or anything running the Docker image below.
-
-For the same reason, run **one instance**. Scaling past a single machine needs
-the database moved off the local volume first.
-
-### Docker
-
-```bash
-docker compose up --build -d          # reads JWT_SECRET from .env
-```
-
-Or directly:
-
-```bash
-docker build -t scriber .
-docker run -d -p 8080:8080 \
-  -v scriber-data:/data \
-  -e JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))") \
-  -e GOOGLE_CLIENT_ID=<optional> \
-  scriber
-```
-
-### Fly.io
-
-`fly.toml` is included and configured for a Sydney region with a mounted
-volume.
-
-```bash
-fly launch --no-deploy --copy-config
-fly volumes create scriber_data --size 3 --region syd
-fly secrets set JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
-fly deploy
-fly certs add your-domain.com          # Fly issues the TLS certificate
-```
-
-Then point the domain at Fly as `fly certs show` instructs — an `A`/`AAAA`
-record to the app's IPs, or a `CNAME` for a subdomain.
-
-### Without containers
-
-```bash
-npm ci
-npm run build
-NODE_ENV=production JWT_SECRET=<32+ random chars> npm start
-```
-
-Put it behind a TLS-terminating proxy. The session cookie sets the `secure`
-flag in production, so sign-in silently fails over plain HTTP.
-
-### Continuous deployment
-
-`.github/workflows/deploy.yml` typechecks, tests and builds every push and pull
-request. Add a `FLY_API_TOKEN` repository secret (`fly tokens create deploy`)
-and pushes to `main` deploy automatically; without it the deploy step is
-skipped and the workflow is just CI.
-
-### Configuration
-
-Copy `server/.env.example` to `server/.env`. Every value has a working default
-in development except `JWT_SECRET`, which is **required** once
-`NODE_ENV=production` (in development a secret is generated and cached in
-`data/`).
-
-### Google sign-in
-
-Email and password work with no setup. To add Google:
-
-1. In the [Google Cloud Console](https://console.cloud.google.com/apis/credentials),
-   create an **OAuth 2.0 Client ID** of type *Web application*.
-2. Add your origins to **Authorised JavaScript origins** —
-   `http://localhost:5173` for development, plus your deployed origin.
-3. Put the client ID in `server/.env` as `GOOGLE_CLIENT_ID`.
-
-The button appears automatically once the server reports a client ID. Signing in
-with Google using an email that already has a password account links the two
-rather than creating a duplicate.
-
----
-
 ## The stack
 
-- **Backend** — Node + Express + TypeScript, SQLite via `better-sqlite3`.
-  Sessions are JWTs in an httpOnly cookie; passwords are bcrypt-hashed. Uploaded
-  papers are stored on disk under `DATA_DIR` and served only to the account that
-  uploaded them.
-- **Frontend** — React + TypeScript + Vite. No UI framework; the design system
-  is plain CSS custom properties with light and dark themes.
-- **Speech** — the browser's Web Speech API for dictation (Chrome, Edge or
-  Safari) and speech synthesis for read-backs. Where speech recognition is
-  unavailable, a keyboard box accepts the same dictation, commands and all.
-- **Papers** — PDFs render with `pdfjs-dist`; images and text files are also
-  accepted.
+Scriber is a **static site backed by Firebase**, so there is no server to run or
+pay for.
 
-SQLite keeps deployment to a single process and one file on disk, which suits a
-school or an individual student. The data layer is small and confined to
-`server/src/routes`, so moving to Postgres later is a contained change.
+- **React + TypeScript + Vite** — no UI framework; the design system is plain
+  CSS custom properties with light and dark themes.
+- **Firebase Auth** — Google sign-in and email/password.
+- **Cloud Firestore** — settings, paper metadata and practice sessions.
+- **Firebase Storage** — the uploaded exam papers themselves.
+- **Web Speech API** — dictation (Chrome, Edge or Safari) and read-backs. Where
+  speech recognition is unavailable, a keyboard box accepts the same dictation,
+  commands and all.
+- **pdfjs-dist** — renders PDF papers; images and text files also work.
+
+Everything a student owns lives under their own user document:
+
+```
+users/{uid}
+users/{uid}/papers/{paperId}
+users/{uid}/attempts/{attemptId}
+```
+
+which reduces the security rules to a single ownership check. `firestore.rules`
+and `storage.rules` deny everything else, including any path outside that tree.
 
 ### Layout
 
 ```
-client/src/scribe/     the scribe engine — commands, parsing, rendering
-client/src/pages/      sign-in, dashboard, exam room, session review, settings
-client/src/lib/        API client and auth context
-server/src/routes/     auth, papers, attempts
+src/scribe/      the scribe engine — commands, parsing, rendering
+src/pages/       sign-in, dashboard, exam room, session review, settings
+src/lib/         firebase setup, auth context, Firestore/Storage access
+scripts/         security-rule checks and an end-to-end browser run
 ```
 
-### Tests
+---
+
+## Setting up Firebase
+
+1. Create a project at [console.firebase.google.com](https://console.firebase.google.com).
+2. **Authentication → Sign-in method** — enable **Email/Password** and **Google**.
+3. **Firestore Database** — create one (production mode; the rules in this repo
+   replace the defaults).
+4. **Storage** — create a bucket.
+5. **Project settings → Your apps → Web app** — register one and copy the config.
+6. Copy `.env.example` to `.env` and paste the values in.
+
+Then publish the rules:
 
 ```bash
-npm test
+npx firebase login
+npx firebase deploy --only firestore:rules,storage:rules
 ```
 
-The scribe engine is pure `(state, utterance) -> (state, events)`, and its
-behaviour is covered by unit tests in `client/src/scribe/engine.test.ts` —
-including that recogniser-supplied punctuation is stripped in strict mode, that
-`scratch that` removes the right burst, and that read-back returns the last two
-sentences.
+Once deployed, add each domain you serve from under **Authentication →
+Settings → Authorised domains**, or Google sign-in will refuse to run there.
+
+### Running it
+
+Requires Node 20+.
+
+```bash
+npm install
+npm run dev            # http://localhost:5173
+```
+
+To work with no cloud project at all, run everything against the local
+emulators:
+
+```bash
+npm run emulators                    # in one terminal
+VITE_USE_EMULATORS=true npm run dev  # in another
+```
+
+---
+
+## Deploying
+
+`npm run build` produces a static `dist/` that any static host will serve.
+
+### GitHub Pages
+
+`.github/workflows/deploy.yml` builds and publishes on every push to `main`.
+
+1. **Settings → Pages → Source: GitHub Actions**.
+2. **Settings → Secrets and variables → Actions → Variables** — add the six
+   `VITE_FIREBASE_*` values. (They are public web-app keys; they live in
+   variables so the same source can target a different project.)
+3. For a project site at `https://<user>.github.io/Scriber/`, also set
+   `VITE_BASE` to `/Scriber/`. On a custom domain, leave it unset.
+
+The build writes a `404.html` copy of the app so deep links work — GitHub Pages
+has no SPA rewrite of its own.
+
+### Render
+
+`render.yaml` is included. Render → **New → Blueprint**, point it at this repo,
+then add the `VITE_FIREBASE_*` values under the service's Environment settings.
+The free Static Site tier covers this app, custom domain and TLS included.
+
+### Firebase Hosting
+
+Since the backend is already Firebase, this keeps everything in one project and
+one command:
+
+```bash
+npm run deploy         # builds, then firebase deploy
+npx firebase hosting:channel:deploy preview   # a shareable preview URL
+```
+
+Add the custom domain under **Hosting → Add custom domain**; Firebase issues the
+certificate.
+
+---
+
+## Tests
+
+```bash
+npm test               # scribe engine unit tests
+npm run test:rules     # proves the security rules isolate accounts (emulators must be running)
+npm run e2e            # full browser run against the emulators
+```
+
+The scribe engine is a pure `(state, utterance) -> (state, events)` reducer, so
+its behaviour is covered directly — including that recogniser-supplied
+punctuation is stripped in strict mode, that `scratch that` removes the right
+burst, and that read-back returns the last two sentences.
+
+`test:rules` signs in as two accounts and confirms that one cannot read or write
+the other's papers, sessions or profile, and that nothing outside the `users`
+tree is writable at all.
 
 ---
 
 ## Privacy
 
-Everything stays on your own server: accounts, uploaded papers and practice
-sessions live in `DATA_DIR`. Dictation is processed by the browser's speech
-recognition, which on Chrome means audio is sent to Google for transcription —
-worth knowing before dictating anything sensitive.
+Practice sessions and uploaded papers are private to the account that created
+them, enforced by the security rules rather than by the UI. Dictation is
+processed by the browser's speech recognition, which on Chrome means audio is
+sent to Google for transcription — worth knowing before dictating anything
+sensitive.

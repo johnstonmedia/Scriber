@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { api, type Attempt } from '../lib/api'
+import { useAuth } from '../lib/auth'
+import { deleteAttempt, getAttempt, type Attempt } from '../lib/data'
 import { readAloud } from '../scribe/speech'
 import { buildInsights, paragraphsOf, type Atom, type ScribeStats } from '../scribe/engine'
 
@@ -14,17 +15,20 @@ const stamp = (ms: number) => {
 export function SessionReview() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [attempt, setAttempt] = useState<Attempt | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<'answer' | 'transcript'>('answer')
 
   useEffect(() => {
-    if (!id) return
-    api
-      .attempt(id)
-      .then(({ attempt }) => setAttempt(attempt))
+    if (!id || !user) return
+    getAttempt(user.uid, id)
+      .then((found) => {
+        if (!found) setError('That practice session no longer exists.')
+        else setAttempt(found)
+      })
       .catch((err: Error) => setError(err.message))
-  }, [id])
+  }, [id, user])
 
   const stats = (attempt?.stats ?? {}) as Partial<ScribeStats>
   const log = (attempt?.log ?? []) as LogEntry[]
@@ -83,8 +87,9 @@ export function SessionReview() {
   }
 
   async function remove() {
+    if (!user) return
     if (!confirm('Delete this practice session?')) return
-    await api.deleteAttempt(attempt!.id)
+    await deleteAttempt(user.uid, attempt!.id)
     navigate('/')
   }
 

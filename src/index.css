@@ -693,3 +693,10 @@ textarea.input {
   body, .exam-shell, .answer-pane { background: #fff; height: auto; overflow: visible; }
   .answer-scroll { overflow: visible; padding: 0; }
 }
+
+.google-btn {
+  border-color: var(--line-strong);
+  background: var(--surface);
+  font-weight: 560;
+}
+.google-btn:hover:not(:disabled) { background: var(--surface-alt); }

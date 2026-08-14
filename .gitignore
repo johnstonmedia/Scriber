@@ -1,7 +1,11 @@
-node_modules/
-dist/
-data/
 *.log
+.DS_Store
 .env
 .env.local
-.DS_Store
+.firebase/
+data/
+dist/
+firebase-debug.log
+firestore-debug.log
+node_modules/
+ui-debug.log

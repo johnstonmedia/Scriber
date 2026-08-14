@@ -74,15 +74,70 @@ npm run dev          # API on :4000, web app on :5173
 
 Open http://localhost:5173 and create an account.
 
-For production:
+## Deploying
+
+The server serves the built client from `client/dist`, so one process runs the
+whole app on `PORT`.
+
+**Scriber needs a persistent disk.** Accounts, the SQLite database and every
+uploaded paper live under `DATA_DIR`. Serverless hosts that discard the
+filesystem between requests — Vercel and Netlify functions among them — will
+lose all of it, so pick a host that offers a real volume: Fly.io, Railway,
+Render, a VPS, or anything running the Docker image below.
+
+For the same reason, run **one instance**. Scaling past a single machine needs
+the database moved off the local volume first.
+
+### Docker
 
 ```bash
+docker compose up --build -d          # reads JWT_SECRET from .env
+```
+
+Or directly:
+
+```bash
+docker build -t scriber .
+docker run -d -p 8080:8080 \
+  -v scriber-data:/data \
+  -e JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))") \
+  -e GOOGLE_CLIENT_ID=<optional> \
+  scriber
+```
+
+### Fly.io
+
+`fly.toml` is included and configured for a Sydney region with a mounted
+volume.
+
+```bash
+fly launch --no-deploy --copy-config
+fly volumes create scriber_data --size 3 --region syd
+fly secrets set JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+fly deploy
+fly certs add your-domain.com          # Fly issues the TLS certificate
+```
+
+Then point the domain at Fly as `fly certs show` instructs — an `A`/`AAAA`
+record to the app's IPs, or a `CNAME` for a subdomain.
+
+### Without containers
+
+```bash
+npm ci
 npm run build
 NODE_ENV=production JWT_SECRET=<32+ random chars> npm start
 ```
 
-The server serves the built client from `client/dist`, so a single process runs
-the whole app on `PORT` (default 4000).
+Put it behind a TLS-terminating proxy. The session cookie sets the `secure`
+flag in production, so sign-in silently fails over plain HTTP.
+
+### Continuous deployment
+
+`.github/workflows/deploy.yml` typechecks, tests and builds every push and pull
+request. Add a `FLY_API_TOKEN` repository secret (`fly tokens create deploy`)
+and pushes to `main` deploy automatically; without it the deploy step is
+skipped and the workflow is just CI.
 
 ### Configuration
 

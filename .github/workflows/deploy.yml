@@ -1,0 +1,51 @@
+name: Deploy
+
+# Every push to main is checked, and deployed to Fly.io once FLY_API_TOKEN is
+# set as a repository secret. Without that secret the deploy step is skipped and
+# the workflow acts purely as CI.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Typecheck, test and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  deploy:
+    name: Deploy to Fly.io
+    needs: check
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for deploy credentials
+        id: creds
+        run: echo "ready=${{ secrets.FLY_API_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+      - if: steps.creds.outputs.ready != 'true'
+        run: |
+          echo "::notice::FLY_API_TOKEN is not set — skipping deploy."
+          echo "Add it under Settings → Secrets and variables → Actions."
+      - if: steps.creds.outputs.ready == 'true'
+        uses: superfly/flyctl-actions/setup-flyctl@master
+      - if: steps.creds.outputs.ready == 'true'
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

@@ -63,6 +63,40 @@ The full list, with alternative phrasings, is in the app under **What to say**.
 
 ---
 
+## Your writer is a person, not a machine
+
+A transcription tool writes every word the instant you say it and never gets
+tired. Practising against that teaches a pace no real writer could survive. So
+Scriber's writer has human limits, and you have to work with them:
+
+**They're always a beat behind.** Words appear a moment after you say them, and
+land at writing pace rather than all at once.
+
+**They can only hold so much.** A gauge under the exam bar fills as your
+backlog grows — green while they're keeping up, amber as they fall behind, red
+when they're about to lose it. Keep talking through the red and they lose what
+they couldn't hold, then stop you: *"Sorry — could you say that again? Carry on
+from 'represents discovery as unsettling'."* That is exactly what happens in a
+real exam room, and the fix is the same: pause at your punctuation.
+
+**They occasionally check a spelling.** Now and then, on a long or unusual
+word, the writer stops and asks you to spell it out — which NESA's rules
+expressly permit them to do. The word is held as a blank until you answer, so
+the prompt never shows you the letters. Say the letters or type them. Where
+spelling is being assessed, what you spell is what gets written.
+
+Three writers are available in Settings:
+
+| Writer | Holds | Starts writing after | Interrupts |
+| --- | --- | --- | --- |
+| Patient | ~28 words | 0.5s | rarely |
+| Realistic (default) | ~18 words | 0.7s | occasionally |
+| Demanding | ~12 words | 0.9s | often |
+
+Spelling questions never fire in the first 45 seconds, never twice within two
+minutes, and are capped per session — a real writer settles into the rhythm
+before they start interrupting.
+
 ## The stack
 
 Scriber is a **static site backed by Firebase**, so there is no server to run or

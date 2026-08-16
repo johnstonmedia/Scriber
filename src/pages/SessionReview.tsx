@@ -30,7 +30,16 @@ export function SessionReview() {
       .catch((err: Error) => setError(err.message))
   }, [id, user])
 
-  const stats = (attempt?.stats ?? {}) as Partial<ScribeStats>
+  const stats = (attempt?.stats ?? {}) as Partial<ScribeStats> & {
+    writer?: {
+      repeatRequests?: number
+      unitsLost?: number
+      spellChecks?: number
+      spellChecksCorrect?: number
+      peakLoad?: number
+    }
+  }
+  const writer = stats.writer ?? {}
   const log = (attempt?.log ?? []) as LogEntry[]
 
   const insights = useMemo(() => {
@@ -146,7 +155,51 @@ export function SessionReview() {
           <div className="value">{stats.corrections ?? 0}</div>
           <div className="label">Corrections</div>
         </div>
+        <div className="stat">
+          <div className="value">{writer.repeatRequests ?? 0}</div>
+          <div className="label">Times asked to repeat</div>
+        </div>
       </div>
+
+      {(writer.repeatRequests || writer.spellChecks) ? (
+        <div className="card card-pad stack gap-3" style={{ marginBottom: 22 }}>
+          <h3>How your writer coped</h3>
+          <div className="row gap-4 wrap">
+            {writer.repeatRequests ? (
+              <div className={`insight insight-watch`} style={{ flex: '1 1 260px' }}>
+                <span>!</span>
+                <span>
+                  You outran your writer {writer.repeatRequests}{' '}
+                  {writer.repeatRequests === 1 ? 'time' : 'times'}, losing{' '}
+                  {writer.unitsLost ?? 0} words. Pause at your punctuation to let them
+                  catch up.
+                </span>
+              </div>
+            ) : (
+              <div className="insight insight-good" style={{ flex: '1 1 260px' }}>
+                <span>✓</span>
+                <span>You never outran your writer — your pacing was manageable throughout.</span>
+              </div>
+            )}
+
+            {writer.spellChecks ? (
+              <div
+                className={`insight insight-${
+                  (writer.spellChecksCorrect ?? 0) === writer.spellChecks ? 'good' : 'watch'
+                }`}
+                style={{ flex: '1 1 260px' }}
+              >
+                <span>{(writer.spellChecksCorrect ?? 0) === writer.spellChecks ? '✓' : '!'}</span>
+                <span>
+                  You were asked to spell {writer.spellChecks}{' '}
+                  {writer.spellChecks === 1 ? 'word' : 'words'} and got{' '}
+                  {writer.spellChecksCorrect ?? 0} right.
+                </span>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 2fr) minmax(260px, 1fr)' }}>
         <div className="card card-pad">

@@ -7,12 +7,26 @@ import { PaperViewer } from '../components/PaperViewer'
 import { Dictation, readAloud, speechRecognitionSupported } from '../scribe/speech'
 import {
   applyUtterance,
+  chunkUtterance,
   createState,
   lastSentences,
   render,
   type ScribeEvent,
   type ScribeState,
 } from '../scribe/engine'
+import {
+  answerSpelling,
+  createMemory,
+  drain,
+  flush,
+  hear,
+  load,
+  loadTone,
+  skipSpelling,
+  type MemoryEvent,
+  type MemoryState,
+  type PendingUnit,
+} from '../scribe/workingMemory'
 
 type Phase = 'setup' | 'reading' | 'working' | 'paused' | 'finished'
 
@@ -46,6 +60,16 @@ export function ExamRoom() {
   const [typed, setTyped] = useState('')
   const [showPaper, setShowPaper] = useState(true)
   const [extraMinutes, setExtraMinutes] = useState(0)
+
+  // The writer's working memory — the lag, the backlog and the spelling checks.
+  const [memory, setMemory] = useState<MemoryState>(() => createMemory(settings.memory))
+  const [repeatAsk, setRepeatAsk] = useState<{ lost: number; resumeFrom: string } | null>(null)
+  const [spelling, setSpelling] = useState('')
+  const memoryRef = useRef(memory)
+  memoryRef.current = memory
+  const burstRef = useRef(0)
+  /** Set below — lets the dictation handler answer an open spelling question. */
+  const spellingAnswerRef = useRef<(spoken: string) => void>(() => {})
 
   // Timing is driven from a wall-clock deadline so a busy tab can't drift.
   const [now, setNow] = useState(() => Date.now())
@@ -115,28 +139,121 @@ export function ExamRoom() {
     [toast, settings.readBackRate],
   )
 
+  /**
+   * Units the writer has committed to the page. Consecutive units from the same
+   * spoken burst go in together, so "scratch that" still rubs out the whole
+   * burst even though the writer wrote it down in pieces.
+   */
+  const commit = useCallback(
+    (units: PendingUnit[]) => {
+      if (units.length === 0) return
+      let state = scribeRef.current
+      const events: ScribeEvent[] = []
+
+      for (let i = 0; i < units.length; ) {
+        const burst = units[i]!.burst
+        let end = i
+        while (end < units.length && units[end]!.burst === burst) end++
+        const text = units.slice(i, end).map((unit) => unit.text).join(' ')
+        const result = applyUtterance(state, text, settings.ruleProfile, burst)
+        state = result.state
+        events.push(...result.events)
+        i = end
+      }
+
+      scribeRef.current = state
+      setScribe(state)
+      handleEvents(events, state)
+    },
+    [settings.ruleProfile, handleEvents],
+  )
+
+  const handleMemoryEvents = useCallback(
+    (events: MemoryEvent[]) => {
+      for (const event of events) {
+        if (event.type === 'repeat') {
+          setRepeatAsk({ lost: event.lost, resumeFrom: event.resumeFrom })
+          readAloud.speak(
+            event.resumeFrom
+              ? `Sorry, could you say that again from, ${event.resumeFrom}`
+              : 'Sorry, could you say that again?',
+            settings.readBackRate,
+          )
+        }
+        if (event.type === 'spellCheck') {
+          setSpelling('')
+          readAloud.speak('How do you spell that?', settings.readBackRate)
+        }
+        if (event.type === 'spellCheckResult') {
+          toast(event.correct ? 'Spelling confirmed' : `Spelled "${event.attempt}"`)
+        }
+      }
+    },
+    [settings.readBackRate, toast],
+  )
+
   /** One finished burst of dictation, from the microphone or the keyboard. */
   const write = useCallback(
     (transcript: string) => {
       const heard = transcript.trim()
       if (!heard) return
-      const result = applyUtterance(scribeRef.current, heard, settings.ruleProfile)
-      scribeRef.current = result.state
-      setScribe(result.state)
+
+      // The writer has stopped and asked a question — whatever you say next is
+      // the answer to it, not more of your essay.
+      if (memoryRef.current.spellCheck) {
+        spellingAnswerRef.current(heard)
+        return
+      }
+
+      const units = chunkUtterance(heard, settings.ruleProfile)
+      if (units.length === 0) return
+
+      const burst = ++burstRef.current
+      const result = hear(memoryRef.current, units, Date.now(), burst)
+      memoryRef.current = result.memory
+      setMemory(result.memory)
+      handleMemoryEvents(result.events)
+
       logRef.current = [
         ...logRef.current,
-        {
-          at: Date.now() - startedAt.current,
-          heard,
-          commands: result.events
-            .filter((e): e is Extract<ScribeEvent, { type: 'command' }> => e.type === 'command')
-            .map((e) => e.label),
-        },
+        { at: Date.now() - startedAt.current, heard, commands: [] },
       ]
-      handleEvents(result.events, result.state)
     },
-    [settings.ruleProfile, handleEvents],
+    [settings.ruleProfile, handleMemoryEvents],
   )
+
+  // A test hook for driving the writer's long timers without waiting them out.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    const w = window as unknown as { __scriberAgeSession?: (ms: number) => void }
+    w.__scriberAgeSession = (ms: number) => {
+      const aged = {
+        ...memoryRef.current,
+        startedAt: (memoryRef.current.startedAt ?? Date.now()) - ms,
+      }
+      memoryRef.current = aged
+      setMemory(aged)
+    }
+    return () => {
+      delete w.__scriberAgeSession
+    }
+  }, [])
+
+  // The pen moves on its own clock, a beat behind the student.
+  useEffect(() => {
+    if (phase !== 'working' && phase !== 'reading') return
+    const id = window.setInterval(() => {
+      const current = memoryRef.current
+      if (current.pending.length === 0 || current.spellCheck) return
+      const result = drain(current, Date.now())
+      if (result.released.length === 0 && result.events.length === 0) return
+      memoryRef.current = result.memory
+      setMemory(result.memory)
+      commit(result.released)
+      handleMemoryEvents(result.events)
+    }, 120)
+    return () => window.clearInterval(id)
+  }, [phase, commit, handleMemoryEvents])
 
   useEffect(() => {
     const instance = new Dictation(
@@ -171,7 +288,7 @@ export function ExamRoom() {
       void saveAttempt(user.uid, attemptId, {
         answerText,
         atoms: scribe.atoms,
-        stats: scribe.stats,
+        stats: { ...scribe.stats, writer: memory.stats },
         log: logRef.current,
         durationMs: Date.now() - startedAt.current,
       }).catch(() =>
@@ -181,7 +298,7 @@ export function ExamRoom() {
     return () => {
       if (saveTimer.current) window.clearTimeout(saveTimer.current)
     }
-  }, [answerText, scribe, attemptId, user, phase])
+  }, [answerText, scribe, memory, attemptId, user, phase])
 
   // ---------------------------------------------------------------- actions
 
@@ -210,6 +327,29 @@ export function ExamRoom() {
     setNow(Date.now())
   }
 
+  function submitSpelling(spoken: string) {
+    const result = answerSpelling(memoryRef.current, spoken, {
+      // Where spelling is assessed the writer must put down what was spelled.
+      writeStudentSpelling: settings.ruleProfile === 'strict',
+    })
+    if (result.released.length === 0) return
+    memoryRef.current = result.memory
+    setMemory(result.memory)
+    commit(result.released)
+    handleMemoryEvents(result.events)
+    setSpelling('')
+  }
+
+  spellingAnswerRef.current = submitSpelling
+
+  function passOnSpelling() {
+    const result = skipSpelling(memoryRef.current)
+    memoryRef.current = result.memory
+    setMemory(result.memory)
+    commit(result.released)
+    setSpelling('')
+  }
+
   function toggleMic() {
     if (!dictation.current) return
     if (listening) {
@@ -236,6 +376,12 @@ export function ExamRoom() {
   async function finish() {
     dictation.current?.stop()
     readAloud.stop()
+
+    // Whatever the writer still had in hand goes onto the page before we score it.
+    const flushed = flush(memoryRef.current)
+    memoryRef.current = flushed.memory
+    setMemory(flushed.memory)
+    commit(flushed.released)
     setPhase('finished')
     if (!attemptId || !user) {
       setNotice('This session was not saved because Firebase was unreachable.')
@@ -245,7 +391,7 @@ export function ExamRoom() {
       await saveAttempt(user.uid, attemptId, {
         answerText,
         atoms: scribe.atoms,
-        stats: scribe.stats,
+        stats: { ...scribe.stats, writer: memoryRef.current.stats },
         log: logRef.current,
         durationMs: Date.now() - startedAt.current,
         status: 'finished',
@@ -339,6 +485,15 @@ export function ExamRoom() {
     )
   }
 
+  const memoryLoad = load(memory)
+  const tone = loadTone(memoryLoad)
+  const toneLabel =
+    tone === 'critical'
+      ? 'Slow down — your writer is losing it'
+      : tone === 'busy'
+        ? 'Your writer is falling behind'
+        : 'Your writer is keeping up'
+
   const lowTime = remaining < 5 * 60_000
   const clockClass =
     phase === 'reading'
@@ -390,6 +545,37 @@ export function ExamRoom() {
         </button>
       </header>
 
+      <div
+        className="load-bar no-print"
+        data-tone={tone}
+        role="meter"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(memoryLoad * 100)}
+        aria-label={toneLabel}
+        title={toneLabel}
+      >
+        <div className="load-bar-fill" style={{ width: `${memoryLoad * 100}%` }} />
+        {tone !== 'calm' && <span className="load-bar-label">{toneLabel}</span>}
+      </div>
+
+      {repeatAsk && (
+        <div className="writer-says no-print" role="alert">
+          <span className="writer-says-icon" aria-hidden="true">!</span>
+          <div className="grow">
+            <strong>Sorry — could you say that again?</strong>
+            <div className="small">
+              {repeatAsk.resumeFrom
+                ? <>I lost the last {repeatAsk.lost} {repeatAsk.lost === 1 ? 'word' : 'words'}. Carry on from &ldquo;<em>{repeatAsk.resumeFrom}</em>&rdquo;.</>
+                : <>I lost the last {repeatAsk.lost} {repeatAsk.lost === 1 ? 'word' : 'words'}. Start that part again.</>}
+            </div>
+          </div>
+          <button className="btn btn-sm" onClick={() => setRepeatAsk(null)}>
+            Got it
+          </button>
+        </div>
+      )}
+
       {notice && (
         <div className="alert alert-warn no-print" style={{ borderRadius: 0 }}>
           <div className="row gap-3">
@@ -421,11 +607,50 @@ export function ExamRoom() {
                     : 'Start the microphone and dictate. Say your punctuation as you go.'}
                 </span>
               )}
+              {memory.spellCheck && <span className="awaiting-spelling"> ▁▁▁▁▁</span>}
               {settings.showLiveText && interim && (
                 <span className="interim"> {interim}</span>
               )}
             </div>
           </div>
+
+          {memory.spellCheck && (
+            <div className="spell-check no-print">
+              <div className="row gap-3 wrap">
+                <span className="writer-says-icon" aria-hidden="true">?</span>
+                <div className="grow">
+                  <strong>How do you spell that?</strong>
+                  <div className="small muted">
+                    Spell the word you just said, letter by letter — say it or type it.
+                    Your writer has stopped until you do.
+                  </div>
+                </div>
+                <button className="btn btn-sm btn-ghost" onClick={passOnSpelling}>
+                  Skip
+                </button>
+              </div>
+              <form
+                className="row gap-2"
+                style={{ marginTop: 10 }}
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  submitSpelling(spelling)
+                }}
+              >
+                <input
+                  className="input grow"
+                  autoFocus
+                  value={spelling}
+                  onChange={(event) => setSpelling(event.target.value)}
+                  placeholder="i r r e v e r s i b l e"
+                  aria-label="Spell the word"
+                />
+                <button className="btn btn-primary" disabled={!spelling.trim()}>
+                  That's it
+                </button>
+              </form>
+            </div>
+          )}
 
           <div className="mic-dock no-print">
             <button

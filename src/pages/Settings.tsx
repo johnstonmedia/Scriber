@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useAuth, type Settings as SettingsShape } from '../lib/auth'
 import { CommandList } from '../components/CommandReference'
 import { readAloud } from '../scribe/speech'
+import { MEMORY_PRESETS, type MemoryPreset } from '../scribe/workingMemory'
 
 export function Settings() {
   const { user, settings, saveSettings, updateName } = useAuth()
@@ -25,6 +26,46 @@ export function Settings() {
       </div>
 
       <div className="stack gap-4">
+        <section className="card card-pad stack gap-4">
+          <div>
+            <h2>Your writer</h2>
+            <p className="small muted" style={{ marginTop: 4 }}>
+              A real writer is always a beat behind you, can only hold so much in their
+              head, and will occasionally stop to ask how a word is spelled. Choose how
+              closely yours behaves like a person.
+            </p>
+          </div>
+
+          {(Object.keys(MEMORY_PRESETS) as MemoryPreset[]).map((key) => {
+            const preset = MEMORY_PRESETS[key]
+            return (
+              <label
+                key={key}
+                className="row gap-3"
+                style={{ alignItems: 'flex-start', cursor: 'pointer' }}
+              >
+                <input
+                  type="radio"
+                  name="writer"
+                  checked={settings.writerPreset === key}
+                  onChange={() =>
+                    void saveSettings({ writerPreset: key, memory: preset.settings })
+                  }
+                  style={{ marginTop: 4 }}
+                />
+                <span>
+                  <strong>{preset.label}</strong>
+                  <span className="small muted" style={{ display: 'block' }}>
+                    {preset.hint} Holds about {preset.settings.capacity} words, starts
+                    writing {(preset.settings.reactionMs / 1000).toFixed(1)}s after you
+                    speak.
+                  </span>
+                </span>
+              </label>
+            )
+          })}
+        </section>
+
         <section className="card card-pad stack gap-4">
           <div>
             <h2>Scribe rules</h2>

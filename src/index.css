@@ -700,3 +700,90 @@ textarea.input {
   font-weight: 560;
 }
 .google-btn:hover:not(:disabled) { background: var(--surface-alt); }
+
+/* ------------------------------------------------- the writer's working head */
+
+/*
+ * A thin gauge under the exam bar showing how far behind the writer is. It
+ * stays quiet until the backlog matters, then speaks up.
+ */
+.load-bar {
+  position: relative;
+  flex: none;
+  height: 6px;
+  background: var(--surface-alt);
+  overflow: visible;
+  transition: height 0.2s ease;
+}
+.load-bar[data-tone='busy'],
+.load-bar[data-tone='critical'] { height: 22px; }
+
+.load-bar-fill {
+  height: 100%;
+  background: var(--good);
+  transition: width 0.14s linear, background 0.3s ease;
+}
+.load-bar[data-tone='busy'] .load-bar-fill { background: var(--warn); }
+.load-bar[data-tone='critical'] .load-bar-fill {
+  background: var(--live);
+  animation: load-pulse 1s ease-in-out infinite;
+}
+
+@keyframes load-pulse {
+  50% { opacity: 0.55; }
+}
+
+.load-bar-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: #fff;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+  pointer-events: none;
+}
+
+/* The writer interrupting — used for repeats and spelling questions. */
+.writer-says {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  background: var(--live-soft);
+  color: var(--live);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.writer-says-icon {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  background: var(--live);
+  color: #fff;
+}
+.writer-says em { font-style: normal; font-weight: 600; }
+
+.spell-check {
+  flex: none;
+  border-top: 1px solid var(--line);
+  background: var(--warn-soft);
+  padding: 14px 20px;
+}
+.spell-check .writer-says-icon { background: var(--warn); }
+.spell-check strong { color: var(--warn); }
+.spell-check .input { letter-spacing: 0.28em; font-family: ui-monospace, Menlo, monospace; }
+
+/* The gap left in the answer while the writer waits for a spelling. */
+.awaiting-spelling {
+  color: var(--warn);
+  letter-spacing: 2px;
+  animation: load-pulse 1.2s ease-in-out infinite;
+}

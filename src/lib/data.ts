@@ -57,6 +57,14 @@ export type AttemptStats = {
   readBacks?: number
   assistedInsertions?: number
   commandCounts?: Record<string, number>
+  /** How the writer coped: repeats asked for, words lost, spelling checks. */
+  writer?: {
+    repeatRequests?: number
+    unitsLost?: number
+    spellChecks?: number
+    spellChecksCorrect?: number
+    peakLoad?: number
+  }
 }
 
 export type Attempt = {

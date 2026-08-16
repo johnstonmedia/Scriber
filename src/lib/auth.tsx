@@ -1,3 +1,4 @@
+import { MEMORY_PRESETS, type MemoryPreset, type MemorySettings } from '../scribe/workingMemory'
 import {
   createContext,
   useCallback,
@@ -26,6 +27,10 @@ export type Settings = {
   recogniserLanguage: string
   showLiveText: boolean
   fontSize: 'small' | 'medium' | 'large'
+  /** Which writer you are practising against. */
+  writerPreset: MemoryPreset
+  /** Resolved limits for that writer. */
+  memory: MemorySettings
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -34,6 +39,8 @@ export const DEFAULT_SETTINGS: Settings = {
   recogniserLanguage: 'en-AU',
   showLiveText: true,
   fontSize: 'medium',
+  writerPreset: 'realistic',
+  memory: MEMORY_PRESETS.realistic!.settings,
 }
 
 export type Profile = {

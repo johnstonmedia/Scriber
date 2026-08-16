@@ -109,6 +109,50 @@ function keyOf(word: string): string {
   return word.toLowerCase().replace(/[^a-z ]/g, '')
 }
 
+/** Longest matching command phrase starting at `index`, if there is one. */
+function matchPhraseAt(words: string[], index: number): { entry: CommandEntry; length: number } | null {
+  for (const candidate of phraseIndex) {
+    const length = candidate.words.length
+    if (length > MAX_PHRASE_WORDS || index + length > words.length) continue
+    let hit = true
+    for (let k = 0; k < length; k++) {
+      if (keyOf(words[index + k]!) !== candidate.words[k]) {
+        hit = false
+        break
+      }
+    }
+    if (hit) return { entry: candidate.entry, length }
+  }
+  return null
+}
+
+/**
+ * Split an utterance into the smallest units that can be written independently.
+ * A unit is either one word or one whole command phrase — "new paragraph" must
+ * never be broken in half, or the writer would put the word "new" on the page.
+ *
+ * The writer's working memory queues these units, so it has to agree with the
+ * engine about where the boundaries are.
+ */
+export function chunkUtterance(text: string, profile: RuleProfile = 'strict'): string[] {
+  const words = tokenise(normaliseUtterance(text, profile))
+  const units: string[] = []
+  for (let i = 0; i < words.length; ) {
+    const matched = matchPhraseAt(words, i)
+    const length = matched?.length ?? 1
+    units.push(words.slice(i, i + length).join(' '))
+    i += length
+  }
+  return units
+}
+
+/** True when the unit is a spoken instruction rather than words to write down. */
+export function isCommandUnit(unit: string): boolean {
+  const words = tokenise(unit)
+  const matched = matchPhraseAt(words, 0)
+  return matched !== null && matched.length === words.length
+}
+
 /** An atom before the engine stamps it with an id and utterance number. */
 type NewAtom = Atom extends infer A ? (A extends Atom ? Omit<A, 'id' | 'utterance'> : never) : never
 
@@ -171,6 +215,13 @@ export function applyUtterance(
   previous: ScribeState,
   rawText: string,
   profile: RuleProfile = 'strict',
+  /**
+   * Groups atoms under one spoken burst. The writer's working memory may hand
+   * a single burst over in several pieces, and "scratch that" has to rub out
+   * the whole burst — so the caller passes the burst's id to keep them
+   * together. Omit it and each call counts as its own burst.
+   */
+  utteranceKey?: number,
 ): ApplyResult {
   const state: ScribeState = {
     ...previous,
@@ -182,27 +233,12 @@ export function applyUtterance(
   const text = normaliseUtterance(rawText, profile)
   if (!text) return { state, events }
 
-  state.utterance += 1
+  state.utterance = utteranceKey ?? state.utterance + 1
   const words = tokenise(text)
 
   for (let i = 0; i < words.length; ) {
     // Longest-match: "question mark" must beat "question".
-    let matched: { entry: CommandEntry; length: number } | null = null
-    for (const candidate of phraseIndex) {
-      const length = candidate.words.length
-      if (length > MAX_PHRASE_WORDS || i + length > words.length) continue
-      let hit = true
-      for (let k = 0; k < length; k++) {
-        if (keyOf(words[i + k]!) !== candidate.words[k]) {
-          hit = false
-          break
-        }
-      }
-      if (hit) {
-        matched = { entry: candidate.entry, length }
-        break
-      }
-    }
+    const matched = matchPhraseAt(words, i)
 
     if (!matched) {
       const word = words[i]!

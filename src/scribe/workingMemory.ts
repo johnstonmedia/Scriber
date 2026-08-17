@@ -97,6 +97,13 @@ export type PendingUnit = {
   heardAt: number
   /** Which spoken burst it came from, so corrections span the whole burst. */
   burst: number
+  /**
+   * True on the last unit of its burst. The writer releases a burst's words
+   * one at a time, at writing pace, so this is the only reliable signal for
+   * "the student has actually finished saying this" — an assisted-mode period
+   * belongs here, never on every word that happens to be released this tick.
+   */
+  lastOfBurst: boolean
 }
 
 export type SpellCheck = {
@@ -185,7 +192,12 @@ export function hear(
     ...memory,
     pending: [
       ...memory.pending,
-      ...units.map((text) => ({ text, heardAt: now, burst })),
+      ...units.map((text, index) => ({
+        text,
+        heardAt: now,
+        burst,
+        lastOfBurst: index === units.length - 1,
+      })),
     ],
     stats: { ...memory.stats },
   }
@@ -391,7 +403,14 @@ export function answerSpelling(
 
   return {
     memory: next,
-    released: [{ text: written, heardAt: check.askedAt, burst: asked?.burst ?? check.askedAt }],
+    released: [
+      {
+        text: written,
+        heardAt: check.askedAt,
+        burst: asked?.burst ?? check.askedAt,
+        lastOfBurst: asked?.lastOfBurst ?? true,
+      },
+    ],
     events: [{ type: 'spellCheckResult', word: check.word, attempt, correct }],
   }
 }
@@ -412,7 +431,12 @@ export function skipSpelling(memory: MemoryState): {
       lastWritten: [...memory.lastWritten, check.word].slice(-12),
     },
     released: [
-      { text: check.word, heardAt: check.askedAt, burst: asked?.burst ?? check.askedAt },
+      {
+        text: check.word,
+        heardAt: check.askedAt,
+        burst: asked?.burst ?? check.askedAt,
+        lastOfBurst: asked?.lastOfBurst ?? true,
+      },
     ],
   }
 }

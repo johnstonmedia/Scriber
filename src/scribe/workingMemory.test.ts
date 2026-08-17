@@ -253,3 +253,56 @@ test('no spelling questions until the writer has settled in', () => {
   later = { ...later, startedAt: -60_000 }
   assert.ok(drain(later, 1_000, () => 0).memory.spellCheck)
 })
+
+test('only the last unit of a burst is marked lastOfBurst', () => {
+  let memory = createMemory(settings({ reactionMs: 0 }))
+  memory = say(memory, 'the war ended quietly', 0, 1).memory
+  const released = drain(memory, 10_000).released
+  assert.deepEqual(
+    released.map((u) => [u.text, u.lastOfBurst]),
+    [
+      ['the', false],
+      ['war', false],
+      ['ended', false],
+      ['quietly', true],
+    ],
+  )
+})
+
+test('a single-word burst is its own last unit', () => {
+  let memory = createMemory(settings({ reactionMs: 0 }))
+  memory = say(memory, 'irreversible', 0, 1).memory
+  const released = drain(memory, 10_000).released
+  assert.deepEqual(released.map((u) => u.lastOfBurst), [true])
+})
+
+test('a spelling answer carries the lastOfBurst of the word it replaced', () => {
+  const always = settings({ reactionMs: 0, spellCheckChance: 1 })
+
+  // The spelled word is mid-burst.
+  let mid = createMemory(always)
+  mid = say(mid, 'irreversible and unequivocal', 0, 1).memory
+  mid = drain(mid, 0, () => 0).memory
+  assert.ok(mid.spellCheck, 'expected the writer to stop on "irreversible"')
+  const midAnswer = answerSpelling(mid, 'i r r e v e r s i b l e', {
+    writeStudentSpelling: true,
+  })
+  assert.equal(midAnswer.released[0]?.lastOfBurst, false)
+
+  // The spelled word is the last word of its burst.
+  let last = createMemory(always)
+  last = say(last, 'irreversible', 0, 1).memory
+  last = drain(last, 0, () => 0).memory
+  assert.ok(last.spellCheck)
+  const lastAnswer = answerSpelling(last, 'i r r e v e r s i b l e', {
+    writeStudentSpelling: true,
+  })
+  assert.equal(lastAnswer.released[0]?.lastOfBurst, true)
+
+  // Skipping the question preserves the same flag.
+  let skipped = createMemory(always)
+  skipped = say(skipped, 'irreversible', 0, 1).memory
+  skipped = drain(skipped, 0, () => 0).memory
+  const skipResult = skipSpelling(skipped)
+  assert.equal(skipResult.released[0]?.lastOfBurst, true)
+})

@@ -45,6 +45,37 @@ test('assisted mode lets the writer supply capitals and a closing full stop', ()
   assert.equal(written(['i went home'], 'assisted'), 'I went home.')
 })
 
+test('closeSentence=false lets a caller feed one burst in pieces without a period after every piece', () => {
+  // This is exactly how the exam room's working memory delivers a burst: one
+  // word (or a few) at a time, at writing pace. Only the final piece may close
+  // the sentence — every earlier piece must not, or assisted mode ends up with
+  // a full stop after every single word.
+  const burst = 1
+  let state = createState()
+  const words = ['the', 'composer', 'represents', 'discovery']
+  words.forEach((word, index) => {
+    const isLast = index === words.length - 1
+    state = applyUtterance(state, word, 'assisted', burst, isLast).state
+  })
+  assert.equal(render(state.atoms), 'The composer represents discovery.')
+})
+
+test('closeSentence still defaults to true for a caller passing one whole utterance at once', () => {
+  const state = applyUtterance(createState(), 'the war ended', 'assisted').state
+  assert.equal(render(state.atoms), 'The war ended.')
+})
+
+test('a later burst reopens and closes its own sentence independently', () => {
+  let state = createState()
+  state = applyUtterance(state, 'the', 'assisted', 1, false).state
+  state = applyUtterance(state, 'war', 'assisted', 1, false).state
+  state = applyUtterance(state, 'ended', 'assisted', 1, true).state
+  state = applyUtterance(state, 'it', 'assisted', 2, false).state
+  state = applyUtterance(state, 'was', 'assisted', 2, false).state
+  state = applyUtterance(state, 'sudden', 'assisted', 2, true).state
+  assert.equal(render(state.atoms), 'The war ended. It was sudden.')
+})
+
 test('capital commands apply to the next word only', () => {
   assert.equal(written(['capital australia entered the war']), 'Australia entered the war')
   assert.equal(written(['all caps nesa sets the rules']), 'NESA sets the rules')

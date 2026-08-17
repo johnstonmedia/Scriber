@@ -145,7 +145,7 @@ export function ExamRoom() {
    * burst even though the writer wrote it down in pieces.
    */
   const commit = useCallback(
-    (units: PendingUnit[]) => {
+    (units: PendingUnit[], options?: { forceClose?: boolean }) => {
       if (units.length === 0) return
       let state = scribeRef.current
       const events: ScribeEvent[] = []
@@ -154,8 +154,14 @@ export function ExamRoom() {
         const burst = units[i]!.burst
         let end = i
         while (end < units.length && units[end]!.burst === burst) end++
-        const text = units.slice(i, end).map((unit) => unit.text).join(' ')
-        const result = applyUtterance(state, text, settings.ruleProfile, burst)
+        const group = units.slice(i, end)
+        const text = group.map((unit) => unit.text).join(' ')
+        // The writer releases a burst's words a few at a time, at writing
+        // pace — an assisted-mode period belongs only on the piece that
+        // actually reaches the end of what the student said, never on every
+        // partial piece a drain tick happens to release.
+        const closeSentence = options?.forceClose || group[group.length - 1]!.lastOfBurst
+        const result = applyUtterance(state, text, settings.ruleProfile, burst, closeSentence)
         state = result.state
         events.push(...result.events)
         i = end
@@ -377,11 +383,13 @@ export function ExamRoom() {
     dictation.current?.stop()
     readAloud.stop()
 
-    // Whatever the writer still had in hand goes onto the page before we score it.
+    // Whatever the writer still had in hand goes onto the page before we score
+    // it — genuinely the end of the answer, so force the closing punctuation
+    // even if the last word released here wasn't the last word of its burst.
     const flushed = flush(memoryRef.current)
     memoryRef.current = flushed.memory
     setMemory(flushed.memory)
-    commit(flushed.released)
+    commit(flushed.released, { forceClose: true })
     setPhase('finished')
     if (!attemptId || !user) {
       setNotice('This session was not saved because Firebase was unreachable.')

@@ -222,6 +222,17 @@ export function applyUtterance(
    * together. Omit it and each call counts as its own burst.
    */
   utteranceKey?: number,
+  /**
+   * Assisted mode may close the sentence it was just given — but only when
+   * this call genuinely reaches the end of what the student said. The working
+   * memory releases one burst's words a few at a time, at writing pace, so a
+   * caller processing those pieces must pass true only on the call that
+   * carries the burst's final word; every earlier piece passes false. Ignored
+   * in strict mode, where the writer never adds this punctuation. Defaults to
+   * true so a caller passing one whole utterance at once — tests, or any
+   * simpler integration — gets the closing behaviour without extra plumbing.
+   */
+  closeSentence = true,
 ): ApplyResult {
   const state: ScribeState = {
     ...previous,
@@ -321,7 +332,7 @@ export function applyUtterance(
     }
   }
 
-  if (profile === 'assisted') closeFinalSentence(state)
+  if (profile === 'assisted' && closeSentence) closeFinalSentence(state)
   return { state, events }
 }
 

@@ -11,13 +11,32 @@ import { connectAuthEmulator, getAuth } from 'firebase/auth'
 import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore'
 import { connectStorageEmulator, getStorage } from 'firebase/storage'
 
+/**
+ * The project Scriber ships against. Committing these is deliberate: they are
+ * the public web-app keys, they are readable in any built bundle anyway, and
+ * hard-coding them means a deploy needs no build-time secrets at all.
+ *
+ * Set the matching VITE_FIREBASE_* variables to point a build somewhere else.
+ */
+const DEFAULT_CONFIG: FirebaseOptions = {
+  apiKey: 'AIzaSyDBqPvwR81AZMqIYEsbihnnbYXUDwBYRzk',
+  authDomain: 'pracscriber.firebaseapp.com',
+  projectId: 'pracscriber',
+  storageBucket: 'pracscriber.firebasestorage.app',
+  messagingSenderId: '861724048481',
+  appId: '1:861724048481:web:ffcc182f1de0104a8abe20',
+}
+
+// An unset variable arrives as an empty string in CI, which falls through to
+// the default just as an absent one does.
 const config: FirebaseOptions = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || DEFAULT_CONFIG.apiKey,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || DEFAULT_CONFIG.authDomain,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || DEFAULT_CONFIG.projectId,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || DEFAULT_CONFIG.storageBucket,
+  messagingSenderId:
+    import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || DEFAULT_CONFIG.messagingSenderId,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || DEFAULT_CONFIG.appId,
 }
 
 /** False until the project keys are filled in, so the UI can explain itself. */

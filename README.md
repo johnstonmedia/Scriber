@@ -182,9 +182,10 @@ VITE_USE_EMULATORS=true npm run dev  # in another
 `.github/workflows/deploy.yml` builds and publishes on every push to `main`.
 
 1. **Settings → Pages → Source: GitHub Actions**.
-2. **Settings → Secrets and variables → Actions → Variables** — add the six
-   `VITE_FIREBASE_*` values. (They are public web-app keys; they live in
-   variables so the same source can target a different project.)
+2. Nothing else — the Firebase web config is committed in `src/lib/firebase.ts`,
+   so the build needs no secrets. To target a different project, set the six
+   `VITE_FIREBASE_*` values under **Settings → Secrets and variables → Actions
+   → Variables** and they take precedence.
 3. For a project site at `https://<user>.github.io/Scriber/`, also set
    `VITE_BASE` to `/Scriber/`. On a custom domain, leave it unset.
 

@@ -591,7 +591,7 @@ export function ExamRoom() {
         {paper && showPaper && (
           <>
             <div className="pane pane-paper">
-              <PaperViewer paper={paper} />
+              <PaperViewer paper={paper} uid={user?.uid ?? ''} />
             </div>
             <div className="pane-divider" />
           </>

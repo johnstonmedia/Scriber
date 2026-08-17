@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
+import { storedPaperIds, usedBytes } from '../lib/fileStore'
 import {
+  attachPaperFile,
   createPaper,
   deletePaper as removePaper,
   listAttempts,
@@ -33,6 +35,9 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null)
   const [progress, setProgress] = useState<number | null>(null)
   const [showUpload, setShowUpload] = useState(false)
+  /** Papers whose file is actually on this device. */
+  const [heldHere, setHeldHere] = useState<Set<string>>(new Set())
+  const [deviceBytes, setDeviceBytes] = useState(0)
 
   const refresh = useCallback(async () => {
     if (!user) return
@@ -43,6 +48,8 @@ export function Dashboard() {
       ])
       setPapers(nextPapers)
       setAttempts(nextAttempts)
+      setHeldHere(await storedPaperIds(user.uid, nextPapers.map((p) => p.id)))
+      setDeviceBytes(await usedBytes(user.uid))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load your library.')
     }
@@ -78,7 +85,6 @@ export function Dashboard() {
           readingMinutes: Number(form.get('readingMinutes') ?? 10),
           workingMinutes: Number(form.get('workingMinutes') ?? 120),
         },
-        setProgress,
       )
       element.reset()
       setShowUpload(false)
@@ -87,6 +93,18 @@ export function Dashboard() {
       setError(err instanceof Error ? err.message : 'Upload failed.')
     } finally {
       setProgress(null)
+    }
+  }
+
+  /** Put a paper's file back on this device, for one added elsewhere. */
+  async function reattach(paper: Paper, file: File) {
+    if (!user) return
+    setError(null)
+    try {
+      await attachPaperFile(user.uid, paper, file)
+      await refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save that file.')
     }
   }
 
@@ -184,7 +202,13 @@ export function Dashboard() {
       )}
 
       <section style={{ marginBottom: 34 }}>
-        <h2 style={{ marginBottom: 12 }}>Your papers</h2>
+        <div className="row gap-3 wrap" style={{ marginBottom: 12, alignItems: 'baseline' }}>
+          <h2>Your papers</h2>
+          <span className="small muted">
+            Kept on this device
+            {deviceBytes > 0 && ` · ${(deviceBytes / 1024 / 1024).toFixed(1)} MB used`}
+          </span>
+        </div>
         {papers.length === 0 ? (
           <div className="empty">
             <p style={{ marginBottom: 12 }}>No papers yet.</p>
@@ -205,11 +229,40 @@ export function Dashboard() {
                 <div className="row gap-2 wrap">
                   <span className="badge">{paper.readingMinutes} min reading</span>
                   <span className="badge">{paper.workingMinutes} min working</span>
+                  {heldHere.has(paper.id) ? (
+                    <span className="badge badge-good">On this device</span>
+                  ) : (
+                    <span className="badge badge-warn">File not on this device</span>
+                  )}
                 </div>
-                <div className="row gap-2">
-                  <Link className="btn btn-primary btn-sm" to={`/exam?paper=${paper.id}`}>
-                    Start practice
-                  </Link>
+
+                {!heldHere.has(paper.id) && (
+                  <p className="tiny muted">
+                    Papers stay on the device they were added to. Add the file again to
+                    read it here.
+                  </p>
+                )}
+
+                <div className="row gap-2 wrap">
+                  {heldHere.has(paper.id) ? (
+                    <Link className="btn btn-primary btn-sm" to={`/exam?paper=${paper.id}`}>
+                      Start practice
+                    </Link>
+                  ) : (
+                    <label className="btn btn-primary btn-sm" style={{ cursor: 'pointer' }}>
+                      Add the file
+                      <input
+                        type="file"
+                        hidden
+                        accept=".pdf,.png,.jpg,.jpeg,.webp,.txt"
+                        onChange={(event) => {
+                          const chosen = event.target.files?.[0]
+                          if (chosen) void reattach(paper, chosen)
+                          event.target.value = ''
+                        }}
+                      />
+                    </label>
+                  )}
                   <button className="btn btn-sm btn-danger spacer" onClick={() => void remove(paper)}>
                     Delete
                   </button>

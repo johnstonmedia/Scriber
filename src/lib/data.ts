@@ -8,7 +8,9 @@
  *   users/{uid}/attempts/{attemptId}
  *
  * which keeps the security rules to a single ownership check (see
- * firestore.rules). Uploaded papers go to storage under the same uid prefix.
+ * firestore.rules). Exam paper files are not stored in the cloud at all — they
+ * stay on the device in IndexedDB (see fileStore.ts); only their details are
+ * written here.
  */
 
 import {
@@ -25,13 +27,8 @@ import {
   type DocumentData,
   type QueryDocumentSnapshot,
 } from 'firebase/firestore'
-import {
-  deleteObject,
-  getDownloadURL,
-  ref,
-  uploadBytesResumable,
-} from 'firebase/storage'
-import { db, storage } from './firebase'
+import { db } from './firebase'
+import { deleteFile, fileStoreAvailable, saveFile } from './fileStore'
 
 export type Paper = {
   id: string
@@ -43,8 +40,6 @@ export type Paper = {
   fileName: string
   mimeType: string
   byteSize: number
-  storagePath: string
-  downloadUrl: string
   createdAt: string
 }
 
@@ -106,8 +101,7 @@ function toPaper(snapshot: QueryDocumentSnapshot<DocumentData>): Paper {
     fileName: String(data.fileName ?? ''),
     mimeType: String(data.mimeType ?? 'application/pdf'),
     byteSize: Number(data.byteSize ?? 0),
-    storagePath: String(data.storagePath ?? ''),
-    downloadUrl: String(data.downloadUrl ?? ''),
+
     createdAt: isoOf(data.createdAt),
   }
 }
@@ -161,12 +155,17 @@ export const ACCEPTED_TYPES = [
 
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
-/** Uploads the file, then writes the metadata document. */
+/**
+ * Saves the file to this device and the paper's details to Firestore.
+ *
+ * The exam paper itself never leaves the browser. Only the details travel, so
+ * the library list follows the student to another device even though the file
+ * does not.
+ */
 export async function createPaper(
   uid: string,
   file: File,
   draft: PaperDraft,
-  onProgress?: (fraction: number) => void,
 ): Promise<Paper> {
   if (!ACCEPTED_TYPES.includes(file.type)) {
     throw new Error('Upload a PDF, image, or text file.')
@@ -174,50 +173,69 @@ export async function createPaper(
   if (file.size > MAX_UPLOAD_BYTES) {
     throw new Error(`That file is too large. The limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`)
   }
+  if (!fileStoreAvailable()) {
+    throw new Error(
+      'This browser will not let Scriber store files. A private window often blocks it.',
+    )
+  }
 
   const paperDoc = doc(papersRef(uid))
-  // The name is only ever used as a storage segment, so strip path separators.
   const safeName = file.name.replace(/[/\\]/g, '_').slice(0, 120)
-  const storagePath = `users/${uid}/papers/${paperDoc.id}/${safeName}`
-  const objectRef = ref(storage, storagePath)
 
-  const task = uploadBytesResumable(objectRef, file, { contentType: file.type })
-  await new Promise<void>((resolve, reject) => {
-    task.on(
-      'state_changed',
-      (snapshot) =>
-        onProgress?.(snapshot.totalBytes ? snapshot.bytesTransferred / snapshot.totalBytes : 0),
-      reject,
-      () => resolve(),
+  // The file lands on the device first: metadata pointing at a paper that was
+  // never stored would leave a permanently broken row in the library.
+  try {
+    await saveFile(uid, paperDoc.id, file)
+  } catch {
+    throw new Error(
+      'There was not enough room to save that paper on this device. Remove a paper and try again.',
     )
-  })
+  }
 
-  const downloadUrl = await getDownloadURL(objectRef)
-
-  await setDoc(paperDoc, {
-    title: draft.title,
-    subject: draft.subject ?? null,
-    year: draft.year ?? null,
-    readingMinutes: draft.readingMinutes,
-    workingMinutes: draft.workingMinutes,
-    fileName: safeName,
-    mimeType: file.type,
-    byteSize: file.size,
-    storagePath,
-    downloadUrl,
-    createdAt: serverTimestamp(),
-  })
+  try {
+    await setDoc(paperDoc, {
+      title: draft.title,
+      subject: draft.subject ?? null,
+      year: draft.year ?? null,
+      readingMinutes: draft.readingMinutes,
+      workingMinutes: draft.workingMinutes,
+      fileName: safeName,
+      mimeType: file.type,
+      byteSize: file.size,
+      createdAt: serverTimestamp(),
+    })
+  } catch (error) {
+    await deleteFile(uid, paperDoc.id)
+    throw error
+  }
 
   const created = await getDoc(paperDoc)
   return toPaper(created as QueryDocumentSnapshot<DocumentData>)
 }
 
+/** Replace the file held for a paper — used when opening it on a new device. */
+export async function attachPaperFile(uid: string, paper: Paper, file: File): Promise<void> {
+  if (!ACCEPTED_TYPES.includes(file.type)) {
+    throw new Error('Upload a PDF, image, or text file.')
+  }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    throw new Error(`That file is too large. The limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`)
+  }
+  await saveFile(uid, paper.id, file)
+  await setDoc(
+    doc(db, 'users', uid, 'papers', paper.id),
+    {
+      fileName: file.name.replace(/[/\\]/g, '_').slice(0, 120),
+      mimeType: file.type,
+      byteSize: file.size,
+    },
+    { merge: true },
+  )
+}
+
 export async function deletePaper(uid: string, paper: Paper): Promise<void> {
   await deleteDoc(doc(db, 'users', uid, 'papers', paper.id))
-  if (paper.storagePath) {
-    // The metadata is gone either way; a missing object must not fail the delete.
-    await deleteObject(ref(storage, paper.storagePath)).catch(() => undefined)
-  }
+  await deleteFile(uid, paper.id)
 }
 
 // ----------------------------------------------------------------- attempts

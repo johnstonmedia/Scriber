@@ -2,44 +2,74 @@ import { useEffect, useRef, useState } from 'react'
 import * as pdfjs from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import type { Paper } from '../lib/data'
+import { getFile } from '../lib/fileStore'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 
-type Props = { paper: Paper }
+type Props = { paper: Paper; uid: string; onMissing?: () => void }
 
 /**
- * Renders the uploaded exam paper beside the answer sheet. PDFs are drawn page
- * by page onto canvases; images and text files get a simpler treatment.
+ * Renders the exam paper beside the answer sheet. PDFs are drawn page by page
+ * onto canvases; images and text files get a simpler treatment.
  *
- * The source is the Storage download URL, which carries its own access token,
- * so it can be handed straight to pdf.js and <img>.
+ * Papers are held on the device, so the file is read out of IndexedDB and
+ * turned into an object URL for pdf.js and <img>. A paper added on another
+ * device has details but no file here, which the caller handles.
  */
-export function PaperViewer({ paper }: Props) {
+export function PaperViewer({ paper, uid, onMissing }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [pageCount, setPageCount] = useState(0)
   const [scale, setScale] = useState(1.25)
   const [textContent, setTextContent] = useState<string | null>(null)
+  const [objectUrl, setObjectUrl] = useState<string | null>(null)
+  const [missing, setMissing] = useState(false)
   const stageRef = useRef<HTMLDivElement>(null)
 
+  // Pull the file off the device and hold an object URL for as long as it shows.
   useEffect(() => {
-    if (paper.mimeType !== 'text/plain') return
+    let url: string | null = null
     let cancelled = false
-    fetch(paper.downloadUrl)
+
+    getFile(uid, paper.id)
+      .then((record) => {
+        if (cancelled) return
+        if (!record) {
+          setMissing(true)
+          onMissing?.()
+          return
+        }
+        url = URL.createObjectURL(record.blob)
+        setObjectUrl(url)
+      })
+      .catch(() => !cancelled && setError('Could not open the saved file.'))
+
+    return () => {
+      cancelled = true
+      if (url) URL.revokeObjectURL(url)
+      setObjectUrl(null)
+      setMissing(false)
+    }
+  }, [uid, paper.id, onMissing])
+
+  useEffect(() => {
+    if (paper.mimeType !== 'text/plain' || !objectUrl) return
+    let cancelled = false
+    fetch(objectUrl)
       .then((response) => response.text())
       .then((text) => !cancelled && setTextContent(text))
       .catch(() => !cancelled && setError('Could not read that file.'))
     return () => {
       cancelled = true
     }
-  }, [paper.downloadUrl, paper.mimeType])
+  }, [objectUrl, paper.mimeType])
 
   useEffect(() => {
-    if (paper.mimeType !== 'application/pdf') return
+    if (paper.mimeType !== 'application/pdf' || !objectUrl) return
     const stage = stageRef.current
     if (!stage) return
 
     let cancelled = false
-    const task = pdfjs.getDocument({ url: paper.downloadUrl })
+    const task = pdfjs.getDocument({ url: objectUrl })
 
     task.promise
       .then(async (pdf) => {
@@ -69,7 +99,21 @@ export function PaperViewer({ paper }: Props) {
       cancelled = true
       void task.destroy()
     }
-  }, [paper.downloadUrl, paper.mimeType, scale])
+  }, [objectUrl, paper.mimeType, scale])
+
+  if (missing) {
+    return (
+      <div style={{ padding: 24 }}>
+        <div className="alert alert-warn">
+          <strong>This paper is saved on another device.</strong>
+          <div className="small" style={{ marginTop: 4 }}>
+            Exam papers stay on the device they were added to, so only the details
+            travelled here. Add the file again from the dashboard to read it on this one.
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (error) {
     return (
@@ -108,7 +152,7 @@ export function PaperViewer({ paper }: Props) {
             </button>
           </>
         )}
-        <a className="btn btn-sm" href={paper.downloadUrl} target="_blank" rel="noreferrer">
+        <a className="btn btn-sm" href={objectUrl ?? '#'} target="_blank" rel="noreferrer">
           Open
         </a>
       </div>
@@ -117,7 +161,7 @@ export function PaperViewer({ paper }: Props) {
 
       {paper.mimeType.startsWith('image/') && (
         <div className="pdf-stage">
-          <img src={paper.downloadUrl} alt={paper.title} className="pdf-page" />
+          <img src={objectUrl ?? ''} alt={paper.title} className="pdf-page" />
         </div>
       )}
 

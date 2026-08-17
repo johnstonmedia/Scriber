@@ -106,7 +106,8 @@ pay for.
   CSS custom properties with light and dark themes.
 - **Firebase Auth** — Google sign-in and email/password.
 - **Cloud Firestore** — settings, paper metadata and practice sessions.
-- **Firebase Storage** — the uploaded exam papers themselves.
+- **IndexedDB** — the exam paper files, held on the student's own device. They
+  are never uploaded; only a paper's details go to Firestore.
 - **Web Speech API** — dictation (Chrome, Edge or Safari) and read-backs. Where
   speech recognition is unavailable, a keyboard box accepts the same dictation,
   commands and all.
@@ -128,7 +129,7 @@ and `storage.rules` deny everything else, including any path outside that tree.
 ```
 src/scribe/      the scribe engine — commands, parsing, rendering
 src/pages/       sign-in, dashboard, exam room, session review, settings
-src/lib/         firebase setup, auth context, Firestore/Storage access
+src/lib/         firebase setup, auth context, Firestore access, local file store
 scripts/         security-rule checks and an end-to-end browser run
 ```
 
@@ -140,9 +141,11 @@ scripts/         security-rule checks and an end-to-end browser run
 2. **Authentication → Sign-in method** — enable **Email/Password** and **Google**.
 3. **Firestore Database** — create one (production mode; the rules in this repo
    replace the defaults).
-4. **Storage** — create a bucket.
-5. **Project settings → Your apps → Web app** — register one and copy the config.
-6. Copy `.env.example` to `.env` and paste the values in.
+4. **Project settings → Your apps → Web app** — register one and copy the config.
+5. Copy `.env.example` to `.env` and paste the values in, or edit the defaults in
+   `src/lib/firebase.ts`.
+
+No Storage bucket is needed — exam papers never leave the device.
 
 Then publish the rules:
 

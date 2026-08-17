@@ -1,21 +1,11 @@
 rules_version = '2';
 
-// Uploaded exam papers are private to the account that uploaded them.
+// Scriber does not use Cloud Storage. Exam papers are held on the student's own
+// device (see src/lib/fileStore.ts) and never uploaded, so nothing should ever
+// be readable or writable here. These rules are kept, and deny everything, so
+// that creating a bucket later cannot silently expose one.
 service firebase.storage {
   match /b/{bucket}/o {
-    match /users/{uid}/papers/{paperId}/{fileName} {
-      allow read: if request.auth != null && request.auth.uid == uid;
-      allow write: if request.auth != null
-                   && request.auth.uid == uid
-                   && request.resource.size < 25 * 1024 * 1024
-                   && (
-                        request.resource.contentType == 'application/pdf'
-                     || request.resource.contentType.matches('image/(png|jpeg|webp)')
-                     || request.resource.contentType == 'text/plain'
-                   );
-      allow delete: if request.auth != null && request.auth.uid == uid;
-    }
-
     match /{allPaths=**} {
       allow read, write: if false;
     }

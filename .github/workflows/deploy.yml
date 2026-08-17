@@ -2,14 +2,13 @@ name: Deploy
 
 # Builds on every push, then publishes to GitHub Pages.
 #
-# The Firebase web config is public by design (access is controlled by
-# firestore.rules and storage.rules), but it is kept in repository variables so
-# the same source can be pointed at a different project without a code change.
-# Set these under Settings → Secrets and variables → Actions → Variables.
+# The Firebase web config is committed in src/lib/firebase.ts, so no build-time
+# secrets are needed. Setting the VITE_FIREBASE_* repository variables points a
+# build at a different project.
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'claude/**']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -59,7 +58,13 @@ jobs:
   deploy:
     name: Publish to GitHub Pages
     needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    # GitHub creates the github-pages environment with a rule permitting
+    # deployments from the default branch only, so publishing from anything
+    # else is rejected before the job runs a single step. Tracking the default
+    # branch keeps this correct whichever branch that happens to be.
+    if: >-
+      github.ref_name == github.event.repository.default_branch &&
+      github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

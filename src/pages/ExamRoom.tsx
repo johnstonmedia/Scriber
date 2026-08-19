@@ -2,8 +2,10 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { createAttempt, getPaper, saveAttempt, type Paper } from '../lib/data'
+import { getOrgPaper, type OrgPaper } from '../lib/org'
 import { CommandDrawer } from '../components/CommandReference'
 import { PaperViewer } from '../components/PaperViewer'
+import { OrgPaperViewer } from '../components/OrgPaperViewer'
 import { Dictation, readAloud, speechRecognitionSupported } from '../scribe/speech'
 import {
   applyUtterance,
@@ -94,8 +96,13 @@ export function ExamRoom() {
   const { user, settings } = useAuth()
 
   const paperId = params.get('paper')
+  const orgId = params.get('org')
   const [paper, setPaper] = useState<Paper | null>(null)
+  const [orgPaper, setOrgPaper] = useState<OrgPaper | null>(null)
   const [attemptId, setAttemptId] = useState<string | null>(null)
+
+  /** Whichever source this practice paper came from — personal or distributed. */
+  const paperMeta = paper ?? orgPaper
 
   const [scribe, setScribe] = useState<ScribeState>(createState)
   const [interim, setInterim] = useState('')
@@ -139,17 +146,25 @@ export function ExamRoom() {
   const supported = useMemo(speechRecognitionSupported, [])
   const answerText = useMemo(() => render(scribe.atoms), [scribe.atoms])
 
-  const readingMs = (paper?.readingMinutes ?? 5) * 60_000
-  const workingMs = ((paper?.workingMinutes ?? 40) + extraMinutes) * 60_000
+  const readingMs = (paperMeta?.readingMinutes ?? 5) * 60_000
+  const workingMs = ((paperMeta?.workingMinutes ?? 40) + extraMinutes) * 60_000
 
   // ------------------------------------------------------------------- load
 
   useEffect(() => {
-    if (!paperId || !user) return
-    getPaper(user.uid, paperId)
-      .then(setPaper)
-      .catch(() => setNotice('Could not load that paper.'))
-  }, [paperId, user])
+    if (!user) return
+    if (orgId && paperId) {
+      getOrgPaper(orgId, paperId)
+        .then(setOrgPaper)
+        .catch(() => setNotice('Could not load that paper.'))
+      return
+    }
+    if (paperId) {
+      getPaper(user.uid, paperId)
+        .then(setPaper)
+        .catch(() => setNotice('Could not load that paper.'))
+    }
+  }, [paperId, orgId, user])
 
   // -------------------------------------------------------------- the clock
 
@@ -397,8 +412,8 @@ export function ExamRoom() {
       try {
         setAttemptId(
           await createAttempt(user.uid, {
-            paperId: paper?.id ?? null,
-            title: paper?.title ?? 'Free practice',
+            paperId: orgPaper ? `org:${orgId}:${orgPaper.id}` : paper?.id ?? null,
+            title: paperMeta?.title ?? 'Free practice',
             ruleProfile: settings.ruleProfile,
           }),
         )
@@ -498,10 +513,10 @@ export function ExamRoom() {
       <div className="page" style={{ maxWidth: 720 }}>
         <div className="page-head">
           <div className="grow">
-            <h1>{paper ? paper.title : 'Free practice'}</h1>
+            <h1>{paperMeta ? paperMeta.title : 'Free practice'}</h1>
             <p className="muted">
-              {paper
-                ? `${paper.readingMinutes} min reading · ${paper.workingMinutes} min working`
+              {paperMeta
+                ? `${paperMeta.readingMinutes} min reading · ${paperMeta.workingMinutes} min working`
                 : 'No paper attached — practise dictating from anything in front of you.'}
             </p>
           </div>
@@ -599,7 +614,7 @@ export function ExamRoom() {
 
         <div className="spacer" />
 
-        {paper && (
+        {paperMeta && (
           <button className="btn btn-sm" onClick={() => setShowPaper((v) => !v)}>
             {showPaper ? 'Hide paper' : 'Show paper'}
           </button>
@@ -663,11 +678,15 @@ export function ExamRoom() {
         </div>
       )}
 
-      <div className="exam-body" data-panes={paper && showPaper ? 'split' : 'answer-only'}>
-        {paper && showPaper && (
+      <div className="exam-body" data-panes={paperMeta && showPaper ? 'split' : 'answer-only'}>
+        {paperMeta && showPaper && (
           <>
             <div className="pane pane-paper">
-              <PaperViewer paper={paper} uid={user?.uid ?? ''} />
+              {orgPaper ? (
+                <OrgPaperViewer paper={orgPaper} />
+              ) : paper ? (
+                <PaperViewer paper={paper} uid={user?.uid ?? ''} />
+              ) : null}
             </div>
             <div className="pane-divider" />
           </>

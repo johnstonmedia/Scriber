@@ -188,6 +188,32 @@ export function Settings() {
           </label>
         </section>
 
+        <section className="card card-pad stack gap-4">
+          <div>
+            <h2>Papers on this device</h2>
+            <p className="small muted" style={{ marginTop: 4 }}>
+              Exam papers you upload stay on this device — they are never sent anywhere.
+            </p>
+          </div>
+          <label className="row gap-2" style={{ cursor: 'pointer', alignItems: 'flex-start' }}>
+            <input
+              type="checkbox"
+              checked={settings.clearFilesOnSignOut}
+              onChange={(e) => update('clearFilesOnSignOut', e.target.checked)}
+              style={{ marginTop: 4 }}
+            />
+            <span>
+              Clear saved papers when I sign out
+              <span className="small muted" style={{ display: 'block' }}>
+                Turn this on if you're using a shared or public computer, such as a school
+                library or computer lab, so the next person to sign in never finds your papers
+                still sitting in the browser. Leave it off on your own device — otherwise
+                you'll need to re-add each paper's file every time you sign back in.
+              </span>
+            </span>
+          </label>
+        </section>
+
         <section className="card card-pad stack gap-3">
           <h2>Your account</h2>
           <div className="field" style={{ maxWidth: 320 }}>

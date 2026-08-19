@@ -75,9 +75,21 @@ await page.getByRole('button', { name: 'Got it' }).click()
 await page.waitForTimeout(4000)
 await page.evaluate(() => window.__scriberAgeSession?.(120_000))
 let asked = false
-for (const word of ['irreversible', 'unequivocal', 'palimpsest', 'verisimilitude', 'antediluvian']) {
+// Demanding preset only has a 30% chance per word, and needs its full
+// reaction time (900ms) plus writing pace (500ms/word) to even be
+// evaluated — 1600ms was too tight a margin. 2500ms with more candidate
+// words keeps this reliable without weakening what it actually checks.
+// 20 words at a 30% chance each is a >99.9% chance of at least one hit —
+// worth the margin since this script gets rerun a lot during development.
+for (const word of [
+  'irreversible', 'unequivocal', 'palimpsest', 'verisimilitude', 'antediluvian',
+  'incontrovertible', 'juxtaposition', 'circumlocution', 'perspicacious',
+  'idiosyncratic', 'quintessential', 'surreptitious', 'unprecedented',
+  'multifaceted', 'inconsequential', 'disproportionate', 'counterintuitive',
+  'characteristically', 'unequivocally', 'extraordinarily',
+]) {
   await dictate(word)
-  await page.waitForTimeout(1600)
+  await page.waitForTimeout(2500)
   if (await page.locator('.spell-check').count()) {
     asked = true
     break

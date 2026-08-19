@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { createAttempt, getPaper, saveAttempt, type Paper } from '../lib/data'
@@ -41,6 +41,53 @@ const format = (ms: number) => {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`
 }
 
+/**
+ * The countdown, isolated in its own memoized component with its own local
+ * 1-second tick. ExamRoom re-renders often while the student is
+ * dictating — interim speech text, the writer's queue draining — and none of
+ * that needs to touch the clock or drag it (and the PDF pane beside it) along
+ * for the ride. Ticking once a second rather than four times is also simply
+ * all a countdown display needs.
+ */
+const ExamClock = memo(function ExamClock({
+  phaseEndsAt,
+  phase,
+}: {
+  phaseEndsAt: RefObject<number | null>
+  phase: Phase
+}) {
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (phase !== 'reading' && phase !== 'working') return
+    setNow(Date.now())
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [phase])
+
+  const remaining = phaseEndsAt.current === null ? 0 : phaseEndsAt.current - now
+  const lowTime = remaining < 5 * 60_000
+  const clockClass =
+    phase === 'reading'
+      ? 'clock clock-reading'
+      : remaining <= 0
+        ? 'clock clock-out'
+        : lowTime
+          ? 'clock clock-low'
+          : 'clock'
+
+  return (
+    <div className={clockClass}>
+      {phase === 'reading' && (
+        <span className="tiny" style={{ marginRight: 6 }}>
+          READING
+        </span>
+      )}
+      {remaining <= 0 && phase === 'working' ? "Time's up" : format(Math.abs(remaining))}
+    </div>
+  )
+})
+
 export function ExamRoom() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
@@ -52,6 +99,11 @@ export function ExamRoom() {
 
   const [scribe, setScribe] = useState<ScribeState>(createState)
   const [interim, setInterim] = useState('')
+  /** Throttles interim speech text — see handleInterim below. */
+  const interimThrottle = useRef<{ timer: number | null; latest: string }>({
+    timer: null,
+    latest: '',
+  })
   const [listening, setListening] = useState(false)
   const [phase, setPhase] = useState<Phase>('setup')
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([])
@@ -71,8 +123,10 @@ export function ExamRoom() {
   /** Set below — lets the dictation handler answer an open spelling question. */
   const spellingAnswerRef = useRef<(spoken: string) => void>(() => {})
 
-  // Timing is driven from a wall-clock deadline so a busy tab can't drift.
-  const [now, setNow] = useState(() => Date.now())
+  // Timing is driven from a wall-clock deadline so a busy tab can't drift. The
+  // deadline itself lives in a ref and its display in the isolated <ExamClock>
+  // below — nothing about the countdown needs to live in this component's
+  // state or re-render it.
   const phaseEndsAt = useRef<number | null>(null)
   const workedMs = useRef(0)
   const dictation = useRef<Dictation | null>(null)
@@ -99,19 +153,19 @@ export function ExamRoom() {
 
   // -------------------------------------------------------------- the clock
 
+  // Reading time hands over to working time on its own — scheduled once for
+  // exactly when it ends, rather than polled. Polling every quarter-second to
+  // ask "has it ended yet?" was re-rendering this whole page, PDF pane
+  // included, four times a second for the entire reading period.
   useEffect(() => {
-    if (phase !== 'reading' && phase !== 'working') return
-    const id = window.setInterval(() => setNow(Date.now()), 250)
-    return () => window.clearInterval(id)
-  }, [phase])
-
-  const remaining = phaseEndsAt.current === null ? 0 : phaseEndsAt.current - now
-
-  useEffect(() => {
-    if (phase !== 'reading' || remaining > 0) return
-    phaseEndsAt.current = Date.now() + workingMs
-    setPhase('working')
-  }, [phase, remaining, workingMs])
+    if (phase !== 'reading') return
+    const msLeft = Math.max(0, (phaseEndsAt.current ?? Date.now()) - Date.now())
+    const id = window.setTimeout(() => {
+      phaseEndsAt.current = Date.now() + workingMs
+      setPhase('working')
+    }, msLeft)
+    return () => window.clearTimeout(id)
+  }, [phase, workingMs])
 
   // ------------------------------------------------------------- the writer
 
@@ -261,11 +315,36 @@ export function ExamRoom() {
     return () => window.clearInterval(id)
   }, [phase, commit, handleMemoryEvents])
 
+  /**
+   * Chrome fires interim speech results many times a second while the student
+   * is actively talking — setting state on every single one re-renders this
+   * whole page (including the PDF pane) at that same rate. Throttled to a
+   * gentle 80ms, well under what's perceptible as "instant", except the empty
+   * string on stop, which clears immediately rather than lagging behind.
+   */
+  const handleInterim = useCallback((text: string) => {
+    const state = interimThrottle.current
+    state.latest = text
+    if (text === '') {
+      if (state.timer !== null) {
+        window.clearTimeout(state.timer)
+        state.timer = null
+      }
+      setInterim('')
+      return
+    }
+    if (state.timer !== null) return
+    state.timer = window.setTimeout(() => {
+      state.timer = null
+      setInterim(state.latest)
+    }, 80)
+  }, [])
+
   useEffect(() => {
     const instance = new Dictation(
       {
         onFinal: write,
-        onInterim: setInterim,
+        onInterim: handleInterim,
         onError: setNotice,
         onListeningChange: setListening,
       },
@@ -275,8 +354,12 @@ export function ExamRoom() {
     return () => {
       instance.dispose()
       dictation.current = null
+      if (interimThrottle.current.timer !== null) {
+        window.clearTimeout(interimThrottle.current.timer)
+        interimThrottle.current.timer = null
+      }
     }
-  }, [write, settings.recogniserLanguage])
+  }, [write, handleInterim, settings.recogniserLanguage])
 
   // Keep the newest text in view as the writer works.
   useEffect(() => {
@@ -330,7 +413,6 @@ export function ExamRoom() {
       phaseEndsAt.current = Date.now() + readingMs
       setPhase('reading')
     }
-    setNow(Date.now())
   }
 
   function submitSpelling(spoken: string) {
@@ -375,7 +457,6 @@ export function ExamRoom() {
 
   function resume() {
     phaseEndsAt.current = Date.now() + workedMs.current
-    setNow(Date.now())
     setPhase('working')
   }
 
@@ -502,16 +583,6 @@ export function ExamRoom() {
         ? 'Your writer is falling behind'
         : 'Your writer is keeping up'
 
-  const lowTime = remaining < 5 * 60_000
-  const clockClass =
-    phase === 'reading'
-      ? 'clock clock-reading'
-      : remaining <= 0
-        ? 'clock clock-out'
-        : lowTime
-          ? 'clock clock-low'
-          : 'clock'
-
   return (
     <div className="exam-shell">
       <header className="exam-bar">
@@ -519,10 +590,7 @@ export function ExamRoom() {
           ← Leave
         </button>
 
-        <div className={clockClass}>
-          {phase === 'reading' && <span className="tiny" style={{ marginRight: 6 }}>READING</span>}
-          {remaining <= 0 && phase === 'working' ? "Time's up" : format(Math.abs(remaining))}
-        </div>
+        <ExamClock phaseEndsAt={phaseEndsAt} phase={phase} />
 
         <span className="badge">
           {settings.ruleProfile === 'strict' ? 'Strict scribe rules' : 'Assisted'}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import * as pdfjs from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import type { Paper } from '../lib/data'
@@ -16,7 +16,14 @@ type Props = { paper: Paper; uid: string; onMissing?: () => void }
  * turned into an object URL for pdf.js and <img>. A paper added on another
  * device has details but no file here, which the caller handles.
  */
-export function PaperViewer({ paper, uid, onMissing }: Props) {
+/**
+ * Memoized because ExamRoom re-renders frequently while the student is
+ * dictating (interim speech text, the writer's queue draining, the clock) —
+ * without this, every one of those unrelated updates would re-reconcile the
+ * whole PDF canvas tree for nothing. paper/uid only change when a different
+ * paper is opened, so this bails out on everything else.
+ */
+export const PaperViewer = memo(function PaperViewer({ paper, uid, onMissing }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [pageCount, setPageCount] = useState(0)
   const [scale, setScale] = useState(1.25)
@@ -172,4 +179,4 @@ export function PaperViewer({ paper, uid, onMissing }: Props) {
       )}
     </>
   )
-}
+})

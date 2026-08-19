@@ -1,16 +1,67 @@
 rules_version = '2';
 
-// Everything a student owns hangs off their own user document, so ownership is
-// a single uid comparison. Nothing is readable by anyone else, ever.
+// Two trust domains:
+//
+//  1. A student's own space — users/{uid} and its papers/attempts
+//     subcollections — unchanged from before: a single ownership check, not
+//     readable by anyone else, including their own org's teachers or admins.
+//     (An org teacher CAN see a session a student saves through org-assigned
+//     work in future, but that would be a separate, explicit write — nothing
+//     here grants it implicitly.)
+//
+//  2. Organisations — schools — with members holding one role each:
+//     'student', 'teacher' or 'admin'. Role is looked up from the caller's
+//     own membership document, never trusted from client-supplied data.
+//
+// siteAdmins/{uid} is a third, separate flag: platform-wide management
+// (accounts, organisations) with no access to any student's papers or
+// dictated answers. Its first entry is created manually — see README.
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function isOwner(uid) {
-      return request.auth != null && request.auth.uid == uid;
+    function isSignedIn() {
+      return request.auth != null;
     }
 
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isSiteAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/siteAdmins/$(request.auth.uid));
+    }
+
+    function member(orgId) {
+      return get(/databases/$(database)/documents/organisations/$(orgId)/members/$(request.auth.uid));
+    }
+
+    function isOrgMember(orgId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/organisations/$(orgId)/members/$(request.auth.uid))
+        && member(orgId).data.status == 'active';
+    }
+
+    function hasRole(orgId, role) {
+      return isOrgMember(orgId) && member(orgId).data.role == role;
+    }
+
+    function isOrgAdmin(orgId) {
+      return hasRole(orgId, 'admin') || isSiteAdmin();
+    }
+
+    function isOrgTeacher(orgId) {
+      return hasRole(orgId, 'teacher') || isOrgAdmin(orgId);
+    }
+
+    // ------------------------------------------------------------ a student
+
     match /users/{uid} {
-      allow read, write: if isOwner(uid);
+      // Site admins can see the account profile itself — email, name — for
+      // account management, never the subcollections below: no papers, no
+      // dictated answers, from anyone, ever, site admin included.
+      allow read: if isOwner(uid) || isSiteAdmin();
+      allow write: if isOwner(uid);
 
       match /papers/{paperId} {
         allow read, write: if isOwner(uid);
@@ -18,6 +69,128 @@ service cloud.firestore {
 
       match /attempts/{attemptId} {
         allow read, write: if isOwner(uid);
+      }
+    }
+
+    // -------------------------------------------------------- site admins
+
+    // Existence of a doc here is the flag; nobody can grant themselves one.
+    // The first is created by hand in the Firebase console (see README) —
+    // after that, existing site admins can add more.
+    match /siteAdmins/{uid} {
+      allow read: if isOwner(uid) || isSiteAdmin();
+      allow write: if isSiteAdmin();
+    }
+
+    // ---------------------------------------------- collection-group queries
+    //
+    // Nested match blocks (below, under organisations/{orgId}) govern get and
+    // write, and any query scoped to one specific org — but NOT a
+    // collectionGroup() query spanning every org at once, which is what "which
+    // organisations am I in" and "which invites are addressed to me" both are.
+    // Those need their own explicit rule here, matched on the field the query
+    // itself filters by (not the path-bound wildcard), since Firestore can
+    // only authorise a list request using conditions it can verify against
+    // exactly what the query already constrains.
+
+    match /{path=**}/members/{uid} {
+      allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /{path=**}/invites/{email} {
+      allow list: if isSignedIn()
+        && request.auth.token.email != null
+        && resource.data.email == request.auth.token.email.lower();
+    }
+
+    // ------------------------------------------------------- organisations
+
+    match /organisations/{orgId} {
+      // Name/settings are not sensitive on their own, and a general user
+      // needs to browse organisations to request access to one.
+      allow read: if isSignedIn();
+      // Anyone can create one — they become its first admin via the members
+      // write below, in the same client-side transaction.
+      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if isOrgAdmin(orgId);
+
+      match /members/{uid} {
+        // Teachers and admins see the roster to build classes; a student
+        // sees only their own membership record. This covers get and any
+        // list scoped to one org (the roster); a query spanning every org at
+        // once needs the separate collection-group rule further up.
+        allow read: if isOwner(uid) || isOrgTeacher(orgId);
+
+        // An admin manages any membership directly — invites accepted by
+        // hand, role changes, removals.
+        allow write: if isOrgAdmin(orgId);
+
+        // Bootstrapping: whoever created the organisation may create their
+        // own membership as its first admin — isOrgAdmin() can't grant this
+        // itself, since no membership exists yet for anyone to check.
+        allow create: if isOwner(uid)
+          && request.resource.data.role == 'admin'
+          && get(/databases/$(database)/documents/organisations/$(orgId)).data.createdBy == request.auth.uid;
+
+        // Accepting an invite: a user may create their OWN membership, but
+        // only matching a pending invite addressed to their account email,
+        // and only with the role that invite actually grants — never a role
+        // of their own choosing.
+        allow create: if isOwner(uid)
+          && request.auth.token.email != null
+          && exists(/databases/$(database)/documents/organisations/$(orgId)/invites/$(request.auth.token.email.lower()))
+          && get(/databases/$(database)/documents/organisations/$(orgId)/invites/$(request.auth.token.email.lower())).data.status == 'pending'
+          && request.resource.data.role == get(/databases/$(database)/documents/organisations/$(orgId)/invites/$(request.auth.token.email.lower())).data.role
+          && request.resource.data.role in ['student', 'teacher']
+          && request.resource.data.status == 'active';
+      }
+
+      match /invites/{email} {
+        // Only admins issue and revoke invites.
+        allow read, delete: if isOrgAdmin(orgId);
+        allow create, update: if isOrgAdmin(orgId)
+          && request.resource.data.email == email;
+        // The invited person may read their own invite by email to discover
+        // it (before they have a membership doc to authorise anything else),
+        // and mark it accepted as part of joining.
+        allow get: if isSignedIn() && request.auth.token.email != null
+          && request.auth.token.email.lower() == email;
+        allow update: if isSignedIn() && request.auth.token.email != null
+          && request.auth.token.email.lower() == email
+          && resource.data.status == 'pending'
+          && request.resource.data.status == 'accepted'
+          // Nothing else about the invite may change on self-accept.
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.email == resource.data.email;
+      }
+
+      match /joinRequests/{uid} {
+        allow read: if isOwner(uid) || isOrgAdmin(orgId);
+        allow create: if isOwner(uid)
+          && request.resource.data.uid == uid
+          && request.resource.data.status == 'pending';
+        // The requester may withdraw their own pending request; an admin
+        // approves or denies.
+        allow delete: if isOwner(uid) || isOrgAdmin(orgId);
+        allow update: if isOrgAdmin(orgId);
+      }
+
+      match /classes/{classId} {
+        // A student sees only classes they belong to; staff see all of them.
+        allow read: if isOrgTeacher(orgId)
+          || (isOrgMember(orgId) && request.auth.uid in resource.data.studentIds);
+        allow create: if isOrgAdmin(orgId)
+          || (isOrgTeacher(orgId) && request.auth.uid in request.resource.data.teacherIds);
+        allow update, delete: if isOrgAdmin(orgId)
+          || (isOrgTeacher(orgId) && request.auth.uid in resource.data.teacherIds);
+      }
+
+      match /papers/{paperId} {
+        // Distribution is org-wide for any active member, regardless of
+        // which class a paper is tagged against — classIds drives what the
+        // dashboard highlights, not who is allowed to open it.
+        allow read: if isOrgMember(orgId);
+        allow write: if isOrgTeacher(orgId);
       }
     }
 

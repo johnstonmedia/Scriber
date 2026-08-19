@@ -9,6 +9,7 @@
 import { initializeApp, type FirebaseOptions } from 'firebase/app'
 import { connectAuthEmulator, getAuth } from 'firebase/auth'
 import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore'
+import { connectStorageEmulator, getStorage } from 'firebase/storage'
 
 /**
  * The project Scriber ships against. Committing these is deliberate: they are
@@ -51,6 +52,13 @@ const app = initializeApp(
 
 export const auth = getAuth(app)
 export const db = getFirestore(app)
+/**
+ * Only organisation-distributed papers ever reach this bucket — a student's
+ * own practice papers stay on their device (see fileStore.ts). Uploading here
+ * requires the project's Storage bucket to actually exist, which in turn
+ * requires the Blaze plan; solo/personal practice needs none of it.
+ */
+export const storage = getStorage(app)
 
 /**
  * `npm run emulators` plus `VITE_USE_EMULATORS=true npm run dev` runs the whole
@@ -59,4 +67,5 @@ export const db = getFirestore(app)
 if (import.meta.env.VITE_USE_EMULATORS === 'true') {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })
   connectFirestoreEmulator(db, '127.0.0.1', 8080)
+  connectStorageEmulator(storage, '127.0.0.1', 9199)
 }

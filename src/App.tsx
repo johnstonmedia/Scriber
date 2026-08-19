@@ -6,13 +6,18 @@ import {
   Route,
   Routes,
   useLocation,
+  useNavigate,
 } from 'react-router-dom'
 import { AuthProvider, useAuth } from './lib/auth'
+import { Home } from './pages/Home'
 import { SignIn } from './pages/SignIn'
 import { Dashboard } from './pages/Dashboard'
 import { ExamRoom } from './pages/ExamRoom'
 import { SessionReview } from './pages/SessionReview'
 import { Settings } from './pages/Settings'
+import { Organisations } from './pages/Organisations'
+import { OrganisationConsole } from './pages/OrganisationConsole'
+import { SiteAdmin } from './pages/SiteAdmin'
 
 function useTheme() {
   const [theme, setTheme] = useState<'light' | 'dark'>(
@@ -26,8 +31,9 @@ function useTheme() {
 }
 
 function TopBar() {
-  const { user, signOut } = useAuth()
+  const { user, memberships, pendingInvites, siteAdmin, signOut } = useAuth()
   const { theme, toggle } = useTheme()
+  const navigate = useNavigate()
 
   return (
     <header className="topbar no-print">
@@ -40,10 +46,39 @@ function TopBar() {
         <NavLink to="/" end className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
           Papers
         </NavLink>
+        <NavLink
+          to="/organisations"
+          className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+        >
+          Organisations
+          {pendingInvites.length > 0 && <span className="nav-dot" aria-label="Pending invite" />}
+        </NavLink>
         <NavLink to="/settings" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
           Settings
         </NavLink>
+        {siteAdmin && (
+          <NavLink to="/admin" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+            Site admin
+          </NavLink>
+        )}
       </nav>
+
+      {memberships.length > 0 && (
+        <select
+          className="input org-switcher"
+          onChange={(e) => e.target.value && navigate(`/organisations/${e.target.value}`)}
+          value=""
+          aria-label="Jump to an organisation"
+        >
+          <option value="">Your organisations…</option>
+          {memberships.map((m) => (
+            <option key={m.orgId} value={m.orgId}>
+              {m.role === 'admin' ? '★ ' : ''}
+              {m.orgName || m.orgId}
+            </option>
+          ))}
+        </select>
+      )}
 
       <div className="spacer" />
 
@@ -70,7 +105,14 @@ function Shell() {
     )
   }
 
-  if (!user) return <SignIn />
+  if (!user) {
+    return (
+      <Routes>
+        <Route path="/login" element={<SignIn />} />
+        <Route path="*" element={<Home />} />
+      </Routes>
+    )
+  }
 
   // The exam room takes over the whole window — no chrome to distract.
   const bare = location.pathname.startsWith('/exam')
@@ -83,6 +125,9 @@ function Shell() {
         <Route path="/exam" element={<ExamRoom />} />
         <Route path="/sessions/:id" element={<SessionReview />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/organisations" element={<Organisations />} />
+        <Route path="/organisations/:orgId" element={<OrganisationConsole />} />
+        <Route path="/admin" element={<SiteAdmin />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>

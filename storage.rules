@@ -1,11 +1,33 @@
 rules_version = '2';
 
-// Scriber does not use Cloud Storage. Exam papers are held on the student's own
-// device (see src/lib/fileStore.ts) and never uploaded, so nothing should ever
-// be readable or writable here. These rules are kept, and deny everything, so
-// that creating a bucket later cannot silently expose one.
+// A student's own practice papers are never uploaded — they stay on-device in
+// IndexedDB (see src/lib/fileStore.ts). The only files that ever reach this
+// bucket are papers a teacher distributes to their organisation, so this is
+// the entire surface: readable by any active member of that organisation,
+// writable by that organisation's teachers and admins. Membership is looked
+// up directly from Firestore rather than duplicated here.
 service firebase.storage {
   match /b/{bucket}/o {
+    match /organisations/{orgId}/papers/{paperId}/{fileName} {
+      allow read: if request.auth != null
+        && firestore.exists(/databases/(default)/documents/organisations/$(orgId)/members/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/organisations/$(orgId)/members/$(request.auth.uid)).data.status == 'active';
+
+      allow write: if request.auth != null
+        && firestore.exists(/databases/(default)/documents/organisations/$(orgId)/members/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/organisations/$(orgId)/members/$(request.auth.uid)).data.role in ['teacher', 'admin']
+        && request.resource.size < 25 * 1024 * 1024
+        && (
+             request.resource.contentType == 'application/pdf'
+          || request.resource.contentType.matches('image/(png|jpeg|webp)')
+          || request.resource.contentType == 'text/plain'
+        );
+
+      allow delete: if request.auth != null
+        && firestore.exists(/databases/(default)/documents/organisations/$(orgId)/members/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/organisations/$(orgId)/members/$(request.auth.uid)).data.role in ['teacher', 'admin'];
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

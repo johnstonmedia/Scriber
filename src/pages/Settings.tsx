@@ -3,6 +3,7 @@ import { useAuth, type Settings as SettingsShape } from '../lib/auth'
 import { CommandList } from '../components/CommandReference'
 import { readAloud } from '../scribe/speech'
 import { MEMORY_PRESETS, type MemoryPreset } from '../scribe/workingMemory'
+import { RULE_PROFILES } from '../lib/ruleProfile'
 
 export function Settings() {
   const { user, settings, saveSettings, updateName } = useAuth()
@@ -83,11 +84,12 @@ export function Settings() {
               style={{ marginTop: 4 }}
             />
             <span>
-              <strong>Strict — you dictate every mark</strong>
+              <strong>{RULE_PROFILES.strict.full}</strong>
               <span className="small muted" style={{ display: 'block' }}>
-                Your words are written in lower case with no punctuation except what you say out
-                loud. This matches the scribe rules used where writing conventions are being
-                assessed, and it is the harder, safer way to practise.
+                {RULE_PROFILES.strict.description}
+              </span>
+              <span className="small muted" style={{ display: 'block', marginTop: 4, fontStyle: 'italic' }}>
+                {RULE_PROFILES.strict.citation}
               </span>
             </span>
           </label>
@@ -101,11 +103,12 @@ export function Settings() {
               style={{ marginTop: 4 }}
             />
             <span>
-              <strong>Assisted — the writer may add punctuation and capitals</strong>
+              <strong>{RULE_PROFILES.assisted.full}</strong>
               <span className="small muted" style={{ display: 'block' }}>
-                Under NESA's general HSC writer rules a writer is allowed to add punctuation and
-                capitals without being told to. Your session report shows how many they added, so
-                you can see what you would have missed.
+                {RULE_PROFILES.assisted.description}
+              </span>
+              <span className="small muted" style={{ display: 'block', marginTop: 4, fontStyle: 'italic' }}>
+                {RULE_PROFILES.assisted.citation}
               </span>
             </span>
           </label>
@@ -183,6 +186,32 @@ export function Settings() {
               Show words as they are heard
               <span className="small muted" style={{ display: 'block' }}>
                 Turn this off for a more exam-like feel, where you only see text once it is written.
+              </span>
+            </span>
+          </label>
+        </section>
+
+        <section className="card card-pad stack gap-4">
+          <div>
+            <h2>Papers on this device</h2>
+            <p className="small muted" style={{ marginTop: 4 }}>
+              Exam papers you upload stay on this device — they are never sent anywhere.
+            </p>
+          </div>
+          <label className="row gap-2" style={{ cursor: 'pointer', alignItems: 'flex-start' }}>
+            <input
+              type="checkbox"
+              checked={settings.clearFilesOnSignOut}
+              onChange={(e) => update('clearFilesOnSignOut', e.target.checked)}
+              style={{ marginTop: 4 }}
+            />
+            <span>
+              Clear saved papers when I sign out
+              <span className="small muted" style={{ display: 'block' }}>
+                Turn this on if you're using a shared or public computer, such as a school
+                library or computer lab, so the next person to sign in never finds your papers
+                still sitting in the browser. Leave it off on your own device — otherwise
+                you'll need to re-add each paper's file every time you sign back in.
               </span>
             </span>
           </label>

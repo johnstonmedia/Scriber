@@ -17,7 +17,7 @@ import {
   setDoc,
 } from 'firebase/firestore'
 
-const app = initializeApp({ apiKey: 'demo', projectId: 'scriber-local', appId: 'demo' })
+const app = initializeApp({ apiKey: 'demo', projectId: 'demo-scriber', appId: 'demo' })
 const auth = getAuth(app)
 const db = getFirestore(app)
 connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })

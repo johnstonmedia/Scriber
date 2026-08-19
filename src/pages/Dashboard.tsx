@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { storedPaperIds, usedBytes } from '../lib/fileStore'
+import { sha256 } from '../lib/hash'
+import { RULE_PROFILES } from '../lib/ruleProfile'
 import {
   attachPaperFile,
   createPaper,
@@ -74,6 +76,12 @@ export function Dashboard() {
     setError(null)
     setProgress(0)
     try {
+      const hash = await sha256(file).catch(() => null)
+      const duplicate = hash ? papers.find((p) => p.contentHash === hash) : undefined
+      if (duplicate && !confirm(`You already have "${duplicate.title}" saved. Add it again as a new copy?`)) {
+        setProgress(null)
+        return
+      }
       const year = Number(form.get('year'))
       await createPaper(
         user.uid,
@@ -100,6 +108,12 @@ export function Dashboard() {
   async function reattach(paper: Paper, file: File) {
     if (!user) return
     setError(null)
+    if (paper.contentHash) {
+      const hash = await sha256(file).catch(() => null)
+      if (hash && hash !== paper.contentHash) {
+        if (!confirm(`This file doesn't look like "${paper.title}" — attach it anyway?`)) return
+      }
+    }
     try {
       await attachPaperFile(user.uid, paper, file)
       await refresh()
@@ -301,7 +315,7 @@ export function Dashboard() {
                   <span className="badge badge-warn">Unfinished</span>
                 )}
                 <span className="badge">
-                  {attempt.ruleProfile === 'strict' ? 'Strict' : 'Assisted'}
+                  {RULE_PROFILES[attempt.ruleProfile].short}
                 </span>
               </Link>
             ))}

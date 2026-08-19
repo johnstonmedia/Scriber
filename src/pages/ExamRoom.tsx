@@ -2,8 +2,11 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { createAttempt, getPaper, saveAttempt, type Paper } from '../lib/data'
+import { getOrgPaper, type OrgPaper } from '../lib/org'
+import { RULE_PROFILES } from '../lib/ruleProfile'
 import { CommandDrawer } from '../components/CommandReference'
 import { PaperViewer } from '../components/PaperViewer'
+import { OrgPaperViewer } from '../components/OrgPaperViewer'
 import { Dictation, readAloud, speechRecognitionSupported } from '../scribe/speech'
 import {
   applyUtterance,
@@ -91,11 +94,38 @@ const ExamClock = memo(function ExamClock({
 export function ExamRoom() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
-  const { user, settings } = useAuth()
+  const { user, settings, memberships } = useAuth()
 
   const paperId = params.get('paper')
+  const orgId = params.get('org')
   const [paper, setPaper] = useState<Paper | null>(null)
+  const [orgPaper, setOrgPaper] = useState<OrgPaper | null>(null)
   const [attemptId, setAttemptId] = useState<string | null>(null)
+
+  /** Whichever source this practice paper came from — personal or distributed. */
+  const paperMeta = paper ?? orgPaper
+
+  /**
+   * If any class this student belongs to in this org has been assigned a
+   * subset of the paper's questions, they see just those — union across
+   * classes when they're in more than one. No assignment for any of their
+   * classes means null, and the viewer falls back to the whole paper.
+   */
+  const assignedQuestionIds = useMemo(() => {
+    if (!orgPaper || !orgId) return null
+    const membership = memberships.find((m) => m.orgId === orgId)
+    if (!membership) return null
+    const ids = new Set<string>()
+    let hasAssignment = false
+    for (const classId of membership.classIds) {
+      const forClass = orgPaper.classQuestions[classId]
+      if (forClass && forClass.length > 0) {
+        hasAssignment = true
+        forClass.forEach((id) => ids.add(id))
+      }
+    }
+    return hasAssignment ? [...ids] : null
+  }, [orgPaper, orgId, memberships])
 
   const [scribe, setScribe] = useState<ScribeState>(createState)
   const [interim, setInterim] = useState('')
@@ -139,17 +169,25 @@ export function ExamRoom() {
   const supported = useMemo(speechRecognitionSupported, [])
   const answerText = useMemo(() => render(scribe.atoms), [scribe.atoms])
 
-  const readingMs = (paper?.readingMinutes ?? 5) * 60_000
-  const workingMs = ((paper?.workingMinutes ?? 40) + extraMinutes) * 60_000
+  const readingMs = (paperMeta?.readingMinutes ?? 5) * 60_000
+  const workingMs = ((paperMeta?.workingMinutes ?? 40) + extraMinutes) * 60_000
 
   // ------------------------------------------------------------------- load
 
   useEffect(() => {
-    if (!paperId || !user) return
-    getPaper(user.uid, paperId)
-      .then(setPaper)
-      .catch(() => setNotice('Could not load that paper.'))
-  }, [paperId, user])
+    if (!user) return
+    if (orgId && paperId) {
+      getOrgPaper(orgId, paperId)
+        .then(setOrgPaper)
+        .catch(() => setNotice('Could not load that paper.'))
+      return
+    }
+    if (paperId) {
+      getPaper(user.uid, paperId)
+        .then(setPaper)
+        .catch(() => setNotice('Could not load that paper.'))
+    }
+  }, [paperId, orgId, user])
 
   // -------------------------------------------------------------- the clock
 
@@ -397,8 +435,8 @@ export function ExamRoom() {
       try {
         setAttemptId(
           await createAttempt(user.uid, {
-            paperId: paper?.id ?? null,
-            title: paper?.title ?? 'Free practice',
+            paperId: orgPaper ? `org:${orgId}:${orgPaper.id}` : paper?.id ?? null,
+            title: paperMeta?.title ?? 'Free practice',
             ruleProfile: settings.ruleProfile,
           }),
         )
@@ -498,10 +536,10 @@ export function ExamRoom() {
       <div className="page" style={{ maxWidth: 720 }}>
         <div className="page-head">
           <div className="grow">
-            <h1>{paper ? paper.title : 'Free practice'}</h1>
+            <h1>{paperMeta ? paperMeta.title : 'Free practice'}</h1>
             <p className="muted">
-              {paper
-                ? `${paper.readingMinutes} min reading · ${paper.workingMinutes} min working`
+              {paperMeta
+                ? `${paperMeta.readingMinutes} min reading · ${paperMeta.workingMinutes} min working`
                 : 'No paper attached — practise dictating from anything in front of you.'}
             </p>
           </div>
@@ -518,11 +556,7 @@ export function ExamRoom() {
 
           <div className="stack gap-2">
             <div className="row gap-2 wrap">
-              <span className="badge badge-accent">
-                {settings.ruleProfile === 'strict'
-                  ? 'Strict — you dictate every mark'
-                  : 'Assisted — the writer may add punctuation'}
-              </span>
+              <span className="badge badge-accent">{RULE_PROFILES[settings.ruleProfile].full}</span>
               {supported ? (
                 <span className="badge badge-good">Microphone ready</span>
               ) : (
@@ -592,14 +626,12 @@ export function ExamRoom() {
 
         <ExamClock phaseEndsAt={phaseEndsAt} phase={phase} />
 
-        <span className="badge">
-          {settings.ruleProfile === 'strict' ? 'Strict scribe rules' : 'Assisted'}
-        </span>
+        <span className="badge">{RULE_PROFILES[settings.ruleProfile].short}</span>
         <span className="badge">{scribe.stats.words} words</span>
 
         <div className="spacer" />
 
-        {paper && (
+        {paperMeta && (
           <button className="btn btn-sm" onClick={() => setShowPaper((v) => !v)}>
             {showPaper ? 'Hide paper' : 'Show paper'}
           </button>
@@ -663,11 +695,15 @@ export function ExamRoom() {
         </div>
       )}
 
-      <div className="exam-body" data-panes={paper && showPaper ? 'split' : 'answer-only'}>
-        {paper && showPaper && (
+      <div className="exam-body" data-panes={paperMeta && showPaper ? 'split' : 'answer-only'}>
+        {paperMeta && showPaper && (
           <>
             <div className="pane pane-paper">
-              <PaperViewer paper={paper} uid={user?.uid ?? ''} />
+              {orgPaper ? (
+                <OrgPaperViewer paper={orgPaper} assignedQuestionIds={assignedQuestionIds} />
+              ) : paper ? (
+                <PaperViewer paper={paper} uid={user?.uid ?? ''} />
+              ) : null}
             </div>
             <div className="pane-divider" />
           </>

@@ -4,6 +4,7 @@ import { useAuth } from '../lib/auth'
 import { deleteAttempt, getAttempt, type Attempt } from '../lib/data'
 import { readAloud } from '../scribe/speech'
 import { buildInsights, paragraphsOf, type Atom, type ScribeStats } from '../scribe/engine'
+import { RULE_PROFILES } from '../lib/ruleProfile'
 
 type LogEntry = { at: number; heard: string; commands: string[] }
 
@@ -116,7 +117,7 @@ export function SessionReview() {
               timeStyle: 'short',
             })}{' '}
             · {stamp(attempt.durationMs)} ·{' '}
-            {attempt.ruleProfile === 'strict' ? 'Strict scribe rules' : 'Assisted'}
+            {RULE_PROFILES[attempt.ruleProfile].short}
           </p>
         </div>
         <button className="btn" onClick={download}>

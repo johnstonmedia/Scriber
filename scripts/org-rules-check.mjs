@@ -1,0 +1,429 @@
+/**
+ * Proves the organisation/role rules actually hold — the highest-risk part of
+ * the whole feature, since a mistake here leaks one school's data to another,
+ * or lets a student grant themselves admin. Run the emulators first:
+ *   npm run emulators
+ */
+import { initializeApp } from 'firebase/app'
+import {
+  connectAuthEmulator,
+  createUserWithEmailAndPassword,
+  getAuth,
+  signInWithEmailAndPassword,
+} from 'firebase/auth'
+import {
+  collection,
+  collectionGroup,
+  connectFirestoreEmulator,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  getFirestore,
+  query,
+  setDoc,
+  updateDoc,
+  where,
+} from 'firebase/firestore'
+import { initializeApp as initAdminApp, cert as adminCert } from 'firebase-admin/app'
+import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore'
+
+const PROJECT_ID = 'demo-scriber'
+
+const app = initializeApp({ apiKey: 'demo', projectId: PROJECT_ID, appId: 'demo' })
+const auth = getAuth(app)
+const db = getFirestore(app)
+connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })
+connectFirestoreEmulator(db, '127.0.0.1', 8080)
+
+// A second, rules-bypassing connection — exactly what a human operator does
+// once, by hand, via the Firebase console, to seed the very first site admin.
+process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080'
+const adminApp = initAdminApp({ projectId: PROJECT_ID }, 'admin-seed')
+const adminDb = getAdminFirestore(adminApp)
+
+const results = []
+const check = (name, passed) => {
+  results.push({ name, passed })
+  console.log(`${passed ? '✓' : '✗ FAIL'}  ${name}`)
+}
+
+async function account(email) {
+  try {
+    return (await createUserWithEmailAndPassword(auth, email, 'practice123')).user
+  } catch {
+    return (await signInWithEmailAndPassword(auth, email, 'practice123')).user
+  }
+}
+
+async function denied(label, operation) {
+  try {
+    await operation()
+    check(label, false)
+  } catch (error) {
+    const code = error?.code ?? ''
+    check(label, code === 'permission-denied' || code === 'auth/insufficient-permission')
+  }
+}
+
+async function allowed(label, operation) {
+  try {
+    await operation()
+    check(label, true)
+  } catch (error) {
+    console.log(`   (error: ${error?.code ?? error})`)
+    check(label, false)
+  }
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
+ * Switching accounts and firing a Firestore request in the same tick can race
+ * the SDK's own auth-token propagation, occasionally sending a request that
+ * still carries the previous user's credentials. A short settle time after
+ * every sign-in avoids that — cheap insurance for a script that switches
+ * accounts this often.
+ */
+async function signInAs(email) {
+  await signInWithEmailAndPassword(auth, email, 'practice123')
+  await sleep(150)
+}
+
+// ---------------------------------------------------------------- accounts
+
+const orgAdmin = await account('orgadmin@school.test')
+const teacher = await account('teacher@school.test')
+const student = await account('student@school.test')
+const outsider = await account('outsider@school.test')
+const rivalAdmin = await account('rivaladmin@rival.test')
+
+// -------------------------------------------------------- org A: creation
+
+await account('orgadmin@school.test')
+await signInAs('orgadmin@school.test')
+const orgAId = 'org-a'
+await allowed('creator can create an organisation and become its admin', async () => {
+  await setDoc(doc(db, 'organisations', orgAId), {
+    name: 'School A',
+    createdBy: orgAdmin.uid,
+    createdAt: new Date().toISOString(),
+    settings: { defaultRuleProfile: 'strict', allowJoinRequests: true },
+  })
+  await setDoc(doc(db, 'organisations', orgAId, 'members', orgAdmin.uid), {
+    uid: orgAdmin.uid,
+    email: 'orgadmin@school.test',
+    name: 'Org Admin',
+    role: 'admin',
+    status: 'active',
+    classIds: [],
+    joinedAt: new Date().toISOString(),
+  })
+})
+
+await denied('creating an org for someone else as createdBy is refused', async () => {
+  await signInAs('outsider@school.test')
+  await setDoc(doc(db, 'organisations', 'spoofed'), {
+    name: 'Spoofed org',
+    createdBy: orgAdmin.uid, // not the caller
+    createdAt: new Date().toISOString(),
+    settings: {},
+  })
+})
+
+// ----------------------------------------------------- invites & self-grant
+
+await signInAs('orgadmin@school.test')
+await allowed('org admin can invite a teacher', () =>
+  setDoc(doc(db, 'organisations', orgAId, 'invites', 'teacher@school.test'), {
+    email: 'teacher@school.test',
+    role: 'teacher',
+    invitedBy: orgAdmin.uid,
+    createdAt: new Date().toISOString(),
+    status: 'pending',
+  }),
+)
+
+await denied('a student cannot invite themselves as admin', async () => {
+  await signInAs('student@school.test')
+  await setDoc(doc(db, 'organisations', orgAId, 'invites', 'student@school.test'), {
+    email: 'student@school.test',
+    role: 'admin',
+    invitedBy: student.uid,
+    createdAt: new Date().toISOString(),
+    status: 'pending',
+  })
+})
+
+await denied('nobody can create a membership without a matching invite', async () => {
+  await signInAs('student@school.test')
+  await setDoc(doc(db, 'organisations', orgAId, 'members', student.uid), {
+    uid: student.uid,
+    email: 'student@school.test',
+    name: 'Student',
+    role: 'student',
+    status: 'active',
+    classIds: [],
+    joinedAt: new Date().toISOString(),
+  })
+})
+
+await signInAs('teacher@school.test')
+await denied('an invited teacher cannot grant themselves admin instead of the invited role', () =>
+  setDoc(doc(db, 'organisations', orgAId, 'members', teacher.uid), {
+    uid: teacher.uid,
+    email: 'teacher@school.test',
+    name: 'Teacher',
+    role: 'admin', // invite says teacher
+    status: 'active',
+    classIds: [],
+    joinedAt: new Date().toISOString(),
+  }),
+)
+
+await allowed('an invited teacher can accept with the role the invite actually grants', () =>
+  setDoc(doc(db, 'organisations', orgAId, 'members', teacher.uid), {
+    uid: teacher.uid,
+    email: 'teacher@school.test',
+    name: 'Teacher',
+    role: 'teacher',
+    status: 'active',
+    classIds: [],
+    joinedAt: new Date().toISOString(),
+  }),
+)
+
+// ------------------------------------------------------------- join request
+
+await signInAs('student@school.test')
+await allowed('a general user can request to join an org', () =>
+  setDoc(doc(db, 'organisations', orgAId, 'joinRequests', student.uid), {
+    uid: student.uid,
+    email: 'student@school.test',
+    name: 'Student',
+    requestedAt: new Date().toISOString(),
+    status: 'pending',
+  }),
+)
+
+await denied('a student cannot approve their own join request', () =>
+  updateDoc(doc(db, 'organisations', orgAId, 'joinRequests', student.uid), { status: 'approved' }),
+)
+
+await signInAs('orgadmin@school.test')
+await allowed('an org admin can approve a join request and create the membership', async () => {
+  await updateDoc(doc(db, 'organisations', orgAId, 'joinRequests', student.uid), {
+    status: 'approved',
+  })
+  await setDoc(doc(db, 'organisations', orgAId, 'members', student.uid), {
+    uid: student.uid,
+    email: 'student@school.test',
+    name: 'Student',
+    role: 'student',
+    status: 'active',
+    classIds: [],
+    joinedAt: new Date().toISOString(),
+  })
+})
+
+// -------------------------------------------------------------- role misuse
+
+await signInAs('student@school.test')
+await denied('a student cannot promote themselves to admin', () =>
+  updateDoc(doc(db, 'organisations', orgAId, 'members', student.uid), { role: 'admin' }),
+)
+
+await denied('a student cannot remove another member', () =>
+  deleteDoc(doc(db, 'organisations', orgAId, 'members', teacher.uid)),
+)
+
+await denied('a student cannot read the org roster beyond their own record', () =>
+  getDocs(collection(db, 'organisations', orgAId, 'members')),
+)
+
+// ------------------------------------------------------------------- classes
+
+await signInAs('teacher@school.test')
+await allowed('a teacher can create a class naming themselves', () =>
+  setDoc(doc(db, 'organisations', orgAId, 'classes', 'class-1'), {
+    name: 'Year 12 English',
+    teacherIds: [teacher.uid],
+    studentIds: [],
+    createdAt: new Date().toISOString(),
+    createdBy: teacher.uid,
+  }),
+)
+
+await denied('a student cannot create a class', async () => {
+  await signInAs('student@school.test')
+  await setDoc(doc(db, 'organisations', orgAId, 'classes', 'class-2'), {
+    name: 'Rogue class',
+    teacherIds: [student.uid],
+    studentIds: [],
+    createdAt: new Date().toISOString(),
+    createdBy: student.uid,
+  })
+})
+
+// --------------------------------------------------------------- org papers
+
+await signInAs('teacher@school.test')
+await allowed('a teacher can create an org paper record', () =>
+  setDoc(doc(db, 'organisations', orgAId, 'papers', 'paper-1'), {
+    title: 'Trial paper',
+    subject: null,
+    year: null,
+    readingMinutes: 5,
+    workingMinutes: 40,
+    classIds: [],
+    fileName: 'trial.txt',
+    mimeType: 'text/plain',
+    byteSize: 10,
+    storagePath: `organisations/${orgAId}/papers/paper-1/trial.txt`,
+    uploadedBy: teacher.uid,
+    createdAt: new Date().toISOString(),
+  }),
+)
+
+await signInAs('student@school.test')
+await allowed('an org member (student) can read a distributed paper', () =>
+  getDoc(doc(db, 'organisations', orgAId, 'papers', 'paper-1')),
+)
+await denied('a student cannot upload an org paper themselves', () =>
+  setDoc(doc(db, 'organisations', orgAId, 'papers', 'paper-2'), {
+    title: 'Snuck in',
+    classIds: [],
+    createdAt: new Date().toISOString(),
+    uploadedBy: student.uid,
+  }),
+)
+
+// --------------------------------------------------- collection-group queries
+//
+// These are the queries listMyMemberships() and listMyPendingInvites() run —
+// spanning every organisation at once, which nested match rules alone do NOT
+// authorise (a real bug caught only by testing the actual query, not just
+// get/write on individual documents).
+
+await signInAs('teacher@school.test')
+await allowed('a teacher can list the full org roster (scoped, not cross-org)', () =>
+  getDocs(collection(db, 'organisations', orgAId, 'members')),
+)
+
+await signInAs('student@school.test')
+await allowed("a collection-group query finds the student's own memberships", async () => {
+  const snap = await getDocs(query(collectionGroup(db, 'members'), where('uid', '==', student.uid)))
+  if (snap.size !== 1) throw new Error(`expected 1 membership, found ${snap.size}`)
+})
+
+// For list queries Firestore doesn't throw on a per-document denial the way
+// it does for get/write — it just silently omits that document from the
+// results. So the check here is that the row comes back empty, not that the
+// call throws.
+await signInAs('teacher@school.test')
+try {
+  const snap = await getDocs(query(collectionGroup(db, 'members'), where('uid', '==', student.uid)))
+  check("a collection-group query cannot fetch someone else's memberships", snap.size === 0)
+} catch {
+  // A thrown permission-denied is an even stronger form of "cannot fetch" — also a pass.
+  check("a collection-group query cannot fetch someone else's memberships", true)
+}
+
+await signInAs('orgadmin@school.test')
+await setDoc(doc(db, 'organisations', orgAId, 'invites', 'lookup@school.test'), {
+  email: 'lookup@school.test',
+  role: 'student',
+  invitedBy: orgAdmin.uid,
+  createdAt: new Date().toISOString(),
+  status: 'pending',
+})
+await account('lookup@school.test')
+await signInAs('lookup@school.test')
+await allowed('a collection-group query finds an invite addressed to this email', async () => {
+  const snap = await getDocs(
+    query(
+      collectionGroup(db, 'invites'),
+      where('email', '==', 'lookup@school.test'),
+      where('status', '==', 'pending'),
+    ),
+  )
+  if (snap.size !== 1) throw new Error(`expected 1 invite, found ${snap.size}`)
+})
+
+await signInAs('student@school.test')
+try {
+  const snap = await getDocs(
+    query(
+      collectionGroup(db, 'invites'),
+      where('email', '==', 'lookup@school.test'),
+      where('status', '==', 'pending'),
+    ),
+  )
+  check("a collection-group invite query for someone else's email comes back empty", snap.size === 0)
+} catch {
+  check("a collection-group invite query for someone else's email comes back empty", true)
+}
+
+// ------------------------------------------------------------- cross-org isolation
+
+await signInAs('rivaladmin@rival.test')
+const orgBId = 'org-b'
+await setDoc(doc(db, 'organisations', orgBId), {
+  name: 'School B',
+  createdBy: rivalAdmin.uid,
+  createdAt: new Date().toISOString(),
+  settings: { defaultRuleProfile: 'strict', allowJoinRequests: true },
+})
+await setDoc(doc(db, 'organisations', orgBId, 'members', rivalAdmin.uid), {
+  uid: rivalAdmin.uid,
+  email: 'rivaladmin@rival.test',
+  name: 'Rival Admin',
+  role: 'admin',
+  status: 'active',
+  classIds: [],
+  joinedAt: new Date().toISOString(),
+})
+
+await denied("school B's admin cannot touch school A's members", () =>
+  updateDoc(doc(db, 'organisations', orgAId, 'members', student.uid), { role: 'teacher' }),
+)
+await denied("school B's admin cannot read school A's org papers unless also a member", () =>
+  getDocs(collection(db, 'organisations', orgAId, 'papers')),
+)
+await denied("school B's admin cannot delete school A's organisation", () =>
+  deleteDoc(doc(db, 'organisations', orgAId)),
+)
+
+// ------------------------------------------------------------------ site admin
+
+await denied('a regular signed-in user cannot self-grant site admin', async () => {
+  await signInAs('outsider@school.test')
+  await setDoc(doc(db, 'siteAdmins', outsider.uid), { grantedAt: new Date().toISOString() })
+})
+
+// Seeded exactly as a human would via the Firebase console — the one
+// legitimate way to create the very first site admin.
+await adminDb.doc(`siteAdmins/${outsider.uid}`).set({ grantedAt: new Date().toISOString() })
+
+await signInAs('outsider@school.test')
+await allowed("a seeded site admin can read school A's member roster", () =>
+  getDocs(collection(db, 'organisations', orgAId, 'members')),
+)
+await allowed("a site admin can read any account's profile", () =>
+  getDoc(doc(db, 'users', student.uid)),
+)
+await denied("a site admin still cannot read a student's papers — content stays private", () =>
+  getDocs(collection(db, 'users', student.uid, 'papers')),
+)
+await denied("a site admin still cannot read a student's practice sessions", () =>
+  getDocs(collection(db, 'users', student.uid, 'attempts')),
+)
+await allowed('a site admin can grant the role to someone else', () =>
+  setDoc(doc(db, 'siteAdmins', rivalAdmin.uid), { grantedAt: new Date().toISOString() }),
+)
+
+await adminApp.delete()
+
+const failed = results.filter((r) => !r.passed)
+console.log(`\n${results.length - failed.length}/${results.length} org rule checks passed`)
+process.exit(failed.length === 0 ? 0 : 1)

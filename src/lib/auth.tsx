@@ -20,6 +20,9 @@ import {
 } from 'firebase/auth'
 import { doc, getDoc, setDoc } from 'firebase/firestore'
 import { auth, db, firebaseConfigured } from './firebase'
+import { listMyMemberships, listMyPendingInvites, type Membership, type PendingInvite } from './org'
+import { isSiteAdmin as checkSiteAdmin } from './siteAdmin'
+import { clearFiles } from './fileStore'
 
 export type Settings = {
   ruleProfile: 'strict' | 'assisted'
@@ -31,6 +34,8 @@ export type Settings = {
   writerPreset: MemoryPreset
   /** Resolved limits for that writer. */
   memory: MemorySettings
+  /** For shared/lab computers — wipe locally-saved exam papers on sign-out. */
+  clearFilesOnSignOut: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -41,6 +46,7 @@ export const DEFAULT_SETTINGS: Settings = {
   fontSize: 'medium',
   writerPreset: 'realistic',
   memory: MEMORY_PRESETS.realistic!.settings,
+  clearFilesOnSignOut: false,
 }
 
 export type Profile = {
@@ -55,6 +61,14 @@ type AuthValue = {
   settings: Settings
   loading: boolean
   configured: boolean
+  /** Every organisation this account belongs to, across all of them. */
+  memberships: Membership[]
+  /** Invites addressed to this account's email, not yet accepted. */
+  pendingInvites: PendingInvite[]
+  /** Platform-wide administrator — see siteAdmin.ts. Never grants content access. */
+  siteAdmin: boolean
+  /** Reload memberships/invites after joining, creating, or leaving an org. */
+  refreshMemberships: () => Promise<void>
   signIn: (email: string, password: string) => Promise<void>
   signUp: (email: string, password: string, name?: string) => Promise<void>
   signInWithGoogle: () => Promise<void>
@@ -117,6 +131,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<Profile | null>(null)
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS)
   const [loading, setLoading] = useState(firebaseConfigured)
+  const [memberships, setMemberships] = useState<Membership[]>([])
+  const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([])
+  const [siteAdmin, setSiteAdmin] = useState(false)
+
+  const loadOrgState = useCallback(async (uid: string, email: string) => {
+    const [nextMemberships, nextInvites, nextSiteAdmin] = await Promise.all([
+      listMyMemberships(uid).catch(() => []),
+      email ? listMyPendingInvites(email).catch(() => []) : Promise.resolve([]),
+      checkSiteAdmin(uid).catch(() => false),
+    ])
+    setMemberships(nextMemberships)
+    setPendingInvites(nextInvites)
+    setSiteAdmin(nextSiteAdmin)
+  }, [])
+
+  const refreshMemberships = useCallback(async () => {
+    if (!user) return
+    await loadOrgState(user.uid, user.email)
+  }, [user, loadOrgState])
 
   useEffect(() => {
     if (!firebaseConfigured) return
@@ -124,6 +157,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!current) {
         setUser(null)
         setSettings(DEFAULT_SETTINGS)
+        setMemberships([])
+        setPendingInvites([])
+        setSiteAdmin(false)
         setLoading(false)
         return
       }
@@ -151,9 +187,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Offline or rules not deployed yet — practise with the defaults.
         setSettings(DEFAULT_SETTINGS)
       }
+
+      await loadOrgState(profile.uid, profile.email)
       setLoading(false)
     })
-  }, [])
+  }, [loadOrgState])
 
   const signIn = useCallback(async (email: string, password: string) => {
     try {
@@ -185,8 +223,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signOut = useCallback(async () => {
+    // Exam papers are namespaced by uid, so another account signing in can
+    // never read them through the app — but on a shared school computer,
+    // leftover files otherwise sit in IndexedDB indefinitely after a student
+    // walks away, inspectable by anyone with access to that browser profile.
+    // Off by default: clearing on every sign-out would force re-attaching
+    // papers each session on a personal device, which is the common case.
+    if (user && settings.clearFilesOnSignOut) {
+      await clearFiles(user.uid).catch(() => undefined)
+    }
     await firebaseSignOut(auth)
-  }, [])
+  }, [user, settings.clearFilesOnSignOut])
 
   const saveSettings = useCallback(
     async (next: Partial<Settings>) => {
@@ -214,6 +261,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       settings,
       loading,
       configured: firebaseConfigured,
+      memberships,
+      pendingInvites,
+      siteAdmin,
+      refreshMemberships,
       signIn,
       signUp,
       signInWithGoogle,
@@ -221,7 +272,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       saveSettings,
       updateName,
     }),
-    [user, settings, loading, signIn, signUp, signInWithGoogle, signOut, saveSettings, updateName],
+    [
+      user,
+      settings,
+      loading,
+      memberships,
+      pendingInvites,
+      siteAdmin,
+      refreshMemberships,
+      signIn,
+      signUp,
+      signInWithGoogle,
+      signOut,
+      saveSettings,
+      updateName,
+    ],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

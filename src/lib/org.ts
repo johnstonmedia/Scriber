@@ -37,6 +37,7 @@ import {
 } from 'firebase/storage'
 import { sendPasswordResetEmail } from 'firebase/auth'
 import { auth, db, storage } from './firebase'
+import type { ExtractedQuestion } from './questionSplit'
 
 export type OrgRole = 'student' | 'teacher' | 'admin'
 
@@ -101,6 +102,14 @@ export type OrgPaper = {
   storagePath: string
   uploadedBy: string
   createdAt: string
+  /** Questions pattern-split out of the paper's text, if any were found. */
+  questions: ExtractedQuestion[]
+  /**
+   * Which of those questions a given class is assigned. A class with no
+   * entry here (or an empty one) sees the paper as a whole, same as before
+   * this existed — assigning a subset is opt-in per class.
+   */
+  classQuestions: Record<string, string[]>
 }
 
 function isoOf(value: unknown): string {
@@ -184,6 +193,24 @@ function toClass(snapshot: QueryDocumentSnapshot<DocumentData>): OrgClass {
 
 function toOrgPaper(snapshot: QueryDocumentSnapshot<DocumentData>): OrgPaper {
   const data = snapshot.data()
+  const questions: ExtractedQuestion[] = Array.isArray(data.questions)
+    ? data.questions
+        .filter((q: unknown): q is { id: unknown; index: unknown; text: unknown } => !!q && typeof q === 'object')
+        .map((q: { id: unknown; index: unknown; text: unknown }) => ({
+          id: String(q.id ?? ''),
+          index: Number(q.index ?? 0),
+          text: String(q.text ?? ''),
+        }))
+    : []
+  const classQuestions: Record<string, string[]> =
+    data.classQuestions && typeof data.classQuestions === 'object'
+      ? Object.fromEntries(
+          Object.entries(data.classQuestions as Record<string, unknown>).map(([classId, ids]) => [
+            classId,
+            Array.isArray(ids) ? ids.map(String) : [],
+          ]),
+        )
+      : {}
   return {
     id: snapshot.id,
     title: String(data.title ?? 'Untitled paper'),
@@ -198,6 +225,8 @@ function toOrgPaper(snapshot: QueryDocumentSnapshot<DocumentData>): OrgPaper {
     storagePath: String(data.storagePath ?? ''),
     uploadedBy: String(data.uploadedBy ?? ''),
     createdAt: isoOf(data.createdAt),
+    questions,
+    classQuestions,
   }
 }
 
@@ -498,6 +527,7 @@ export type OrgPaperDraft = {
   readingMinutes: number
   workingMinutes: number
   classIds: string[]
+  questions?: ExtractedQuestion[]
 }
 
 /**
@@ -537,6 +567,8 @@ export async function uploadOrgPaper(
     storagePath,
     uploadedBy: uploaderUid,
     createdAt: serverTimestamp(),
+    questions: draft.questions ?? [],
+    classQuestions: {},
   })
 
   const created = await getDoc(paperDoc)
@@ -561,4 +593,27 @@ export async function orgPaperDownloadUrl(paper: OrgPaper): Promise<string> {
 export async function deleteOrgPaper(orgId: string, paper: OrgPaper): Promise<void> {
   await deleteDoc(doc(orgPapersRef(orgId), paper.id))
   await deleteObject(ref(storage, paper.storagePath)).catch(() => undefined)
+}
+
+/**
+ * Assigns a specific subset of a paper's extracted questions to one class.
+ * An empty list clears the assignment, returning that class to seeing the
+ * whole paper.
+ */
+export async function setClassQuestions(
+  orgId: string,
+  paperId: string,
+  classId: string,
+  questionIds: string[],
+): Promise<void> {
+  const snapshot = await getDoc(doc(orgPapersRef(orgId), paperId))
+  if (!snapshot.exists()) throw new Error('Paper not found.')
+  const current = toOrgPaper(snapshot as QueryDocumentSnapshot<DocumentData>).classQuestions
+  const next = { ...current }
+  if (questionIds.length === 0) {
+    delete next[classId]
+  } else {
+    next[classId] = questionIds
+  }
+  await updateDoc(doc(orgPapersRef(orgId), paperId), { classQuestions: next })
 }

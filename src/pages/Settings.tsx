@@ -3,6 +3,7 @@ import { useAuth, type Settings as SettingsShape } from '../lib/auth'
 import { CommandList } from '../components/CommandReference'
 import { readAloud } from '../scribe/speech'
 import { MEMORY_PRESETS, type MemoryPreset } from '../scribe/workingMemory'
+import { RULE_PROFILES } from '../lib/ruleProfile'
 
 export function Settings() {
   const { user, settings, saveSettings, updateName } = useAuth()
@@ -83,11 +84,12 @@ export function Settings() {
               style={{ marginTop: 4 }}
             />
             <span>
-              <strong>Strict — you dictate every mark</strong>
+              <strong>{RULE_PROFILES.strict.full}</strong>
               <span className="small muted" style={{ display: 'block' }}>
-                Your words are written in lower case with no punctuation except what you say out
-                loud. This matches the scribe rules used where writing conventions are being
-                assessed, and it is the harder, safer way to practise.
+                {RULE_PROFILES.strict.description}
+              </span>
+              <span className="small muted" style={{ display: 'block', marginTop: 4, fontStyle: 'italic' }}>
+                {RULE_PROFILES.strict.citation}
               </span>
             </span>
           </label>
@@ -101,11 +103,12 @@ export function Settings() {
               style={{ marginTop: 4 }}
             />
             <span>
-              <strong>Assisted — the writer may add punctuation and capitals</strong>
+              <strong>{RULE_PROFILES.assisted.full}</strong>
               <span className="small muted" style={{ display: 'block' }}>
-                Under NESA's general HSC writer rules a writer is allowed to add punctuation and
-                capitals without being told to. Your session report shows how many they added, so
-                you can see what you would have missed.
+                {RULE_PROFILES.assisted.description}
+              </span>
+              <span className="small muted" style={{ display: 'block', marginTop: 4, fontStyle: 'italic' }}>
+                {RULE_PROFILES.assisted.citation}
               </span>
             </span>
           </label>

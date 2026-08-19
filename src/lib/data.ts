@@ -29,6 +29,7 @@ import {
 } from 'firebase/firestore'
 import { db } from './firebase'
 import { deleteFile, fileStoreAvailable, saveFile } from './fileStore'
+import { sha256 } from './hash'
 
 export type Paper = {
   id: string
@@ -40,6 +41,8 @@ export type Paper = {
   fileName: string
   mimeType: string
   byteSize: number
+  /** SHA-256 of the file — lets the same paper be recognised on another device. */
+  contentHash: string | null
   createdAt: string
 }
 
@@ -101,7 +104,7 @@ function toPaper(snapshot: QueryDocumentSnapshot<DocumentData>): Paper {
     fileName: String(data.fileName ?? ''),
     mimeType: String(data.mimeType ?? 'application/pdf'),
     byteSize: Number(data.byteSize ?? 0),
-
+    contentHash: typeof data.contentHash === 'string' ? data.contentHash : null,
     createdAt: isoOf(data.createdAt),
   }
 }
@@ -181,6 +184,7 @@ export async function createPaper(
 
   const paperDoc = doc(papersRef(uid))
   const safeName = file.name.replace(/[/\\]/g, '_').slice(0, 120)
+  const contentHash = await sha256(file).catch(() => null)
 
   // The file lands on the device first: metadata pointing at a paper that was
   // never stored would leave a permanently broken row in the library.
@@ -202,6 +206,7 @@ export async function createPaper(
       fileName: safeName,
       mimeType: file.type,
       byteSize: file.size,
+      contentHash,
       createdAt: serverTimestamp(),
     })
   } catch (error) {
@@ -221,6 +226,7 @@ export async function attachPaperFile(uid: string, paper: Paper, file: File): Pr
   if (file.size > MAX_UPLOAD_BYTES) {
     throw new Error(`That file is too large. The limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`)
   }
+  const contentHash = await sha256(file).catch(() => null)
   await saveFile(uid, paper.id, file)
   await setDoc(
     doc(db, 'users', uid, 'papers', paper.id),
@@ -228,6 +234,7 @@ export async function attachPaperFile(uid: string, paper: Paper, file: File): Pr
       fileName: file.name.replace(/[/\\]/g, '_').slice(0, 120),
       mimeType: file.type,
       byteSize: file.size,
+      contentHash,
     },
     { merge: true },
   )

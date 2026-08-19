@@ -20,6 +20,7 @@ import {
   removeStudentFromClass,
   resetMemberPassword,
   revokeInvite,
+  setClassQuestions,
   updateMemberRole,
   uploadOrgPaper,
   type Invite,
@@ -30,6 +31,7 @@ import {
   type OrgPaper,
   type OrgRole,
 } from '../lib/org'
+import { canExtractQuestions, extractQuestions } from '../lib/questionExtract'
 
 type Tab = 'papers' | 'classes' | 'members' | 'requests' | 'settings'
 
@@ -152,6 +154,7 @@ export function OrganisationConsole() {
       return
     }
     try {
+      const questions = canExtractQuestions(file.type) ? await extractQuestions(file) : []
       await uploadOrgPaper(orgId, user.uid, file, {
         title: String(form.get('title') || '').trim() || file.name.replace(/\.[^.]+$/, ''),
         subject: String(form.get('subject') || '').trim() || undefined,
@@ -161,6 +164,7 @@ export function OrganisationConsole() {
         classIds: myClasses
           .filter((c) => form.getAll('classIds').includes(c.id))
           .map((c) => c.id),
+        questions,
       })
       formEl.reset()
       await refresh()
@@ -270,26 +274,31 @@ export function OrganisationConsole() {
               papers.map((p, i) => (
                 <div
                   key={p.id}
-                  className="row gap-3 wrap"
+                  className="stack gap-2"
                   style={{ padding: '14px 18px', borderTop: i === 0 ? 'none' : '1px solid var(--line)' }}
                 >
-                  <div className="grow">
-                    <strong>{p.title}</strong>
-                    <div className="small muted">
-                      {[p.subject, p.year].filter(Boolean).join(' · ') || 'No subject set'} ·{' '}
-                      {p.readingMinutes} min reading · {p.workingMinutes} min working
+                  <div className="row gap-3 wrap">
+                    <div className="grow">
+                      <strong>{p.title}</strong>
+                      <div className="small muted">
+                        {[p.subject, p.year].filter(Boolean).join(' · ') || 'No subject set'} ·{' '}
+                        {p.readingMinutes} min reading · {p.workingMinutes} min working
+                      </div>
                     </div>
+                    <Link className="btn btn-sm btn-primary" to={`/exam?org=${orgId}&paper=${p.id}`}>
+                      Start practice
+                    </Link>
+                    {isStaff && (
+                      <button
+                        className="btn btn-sm btn-danger"
+                        onClick={() => void deleteOrgPaper(orgId, p).then(refresh)}
+                      >
+                        Delete
+                      </button>
+                    )}
                   </div>
-                  <Link className="btn btn-sm btn-primary" to={`/exam?org=${orgId}&paper=${p.id}`}>
-                    Start practice
-                  </Link>
                   {isStaff && (
-                    <button
-                      className="btn btn-sm btn-danger"
-                      onClick={() => void deleteOrgPaper(orgId, p).then(refresh)}
-                    >
-                      Delete
-                    </button>
+                    <QuestionAssignment paper={p} orgId={orgId} classes={myClasses} onChange={refresh} />
                   )}
                 </div>
               ))
@@ -457,6 +466,68 @@ export function OrganisationConsole() {
           >
             Leave organisation
           </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Lets a teacher/admin send a specific subset of a paper's extracted
+ * questions to one class and a different subset to another. A class left
+ * unchecked for every question keeps seeing the whole paper, unchanged from
+ * before this existed — assigning a subset is opt-in per class.
+ */
+function QuestionAssignment({
+  paper,
+  orgId,
+  classes,
+  onChange,
+}: {
+  paper: OrgPaper
+  orgId: string
+  classes: OrgClass[]
+  onChange: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  if (paper.questions.length < 2) return null
+
+  return (
+    <div className="stack gap-2">
+      <button type="button" className="btn btn-sm btn-ghost" onClick={() => setOpen((v) => !v)} style={{ alignSelf: 'flex-start' }}>
+        {open ? 'Hide' : 'Assign'} questions to classes ({paper.questions.length} extracted)
+      </button>
+      {open && (
+        <div className="stack gap-3" style={{ padding: '4px 0 10px' }}>
+          {classes.length === 0 && (
+            <div className="small muted">Create a class first to assign specific questions to it.</div>
+          )}
+          {classes.map((c) => {
+            const assigned = new Set(paper.classQuestions[c.id] ?? [])
+            return (
+              <div key={c.id} className="stack gap-1">
+                <strong className="small">{c.name}</strong>
+                <div className="row gap-3 wrap">
+                  {paper.questions.map((q) => (
+                    <label key={q.id} className="row gap-1 small" style={{ cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={assigned.has(q.id)}
+                        onChange={(e) => {
+                          const next = new Set(assigned)
+                          if (e.target.checked) next.add(q.id)
+                          else next.delete(q.id)
+                          void setClassQuestions(orgId, paper.id, c.id, [...next]).then(onChange)
+                        }}
+                      />
+                      Q{q.index}
+                    </label>
+                  ))}
+                </div>
+                {assigned.size === 0 && <span className="small muted">Whole paper — no subset assigned.</span>}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

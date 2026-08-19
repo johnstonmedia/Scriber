@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { createAttempt, getPaper, saveAttempt, type Paper } from '../lib/data'
 import { getOrgPaper, type OrgPaper } from '../lib/org'
+import { RULE_PROFILES } from '../lib/ruleProfile'
 import { CommandDrawer } from '../components/CommandReference'
 import { PaperViewer } from '../components/PaperViewer'
 import { OrgPaperViewer } from '../components/OrgPaperViewer'
@@ -93,7 +94,7 @@ const ExamClock = memo(function ExamClock({
 export function ExamRoom() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
-  const { user, settings } = useAuth()
+  const { user, settings, memberships } = useAuth()
 
   const paperId = params.get('paper')
   const orgId = params.get('org')
@@ -103,6 +104,28 @@ export function ExamRoom() {
 
   /** Whichever source this practice paper came from — personal or distributed. */
   const paperMeta = paper ?? orgPaper
+
+  /**
+   * If any class this student belongs to in this org has been assigned a
+   * subset of the paper's questions, they see just those — union across
+   * classes when they're in more than one. No assignment for any of their
+   * classes means null, and the viewer falls back to the whole paper.
+   */
+  const assignedQuestionIds = useMemo(() => {
+    if (!orgPaper || !orgId) return null
+    const membership = memberships.find((m) => m.orgId === orgId)
+    if (!membership) return null
+    const ids = new Set<string>()
+    let hasAssignment = false
+    for (const classId of membership.classIds) {
+      const forClass = orgPaper.classQuestions[classId]
+      if (forClass && forClass.length > 0) {
+        hasAssignment = true
+        forClass.forEach((id) => ids.add(id))
+      }
+    }
+    return hasAssignment ? [...ids] : null
+  }, [orgPaper, orgId, memberships])
 
   const [scribe, setScribe] = useState<ScribeState>(createState)
   const [interim, setInterim] = useState('')
@@ -533,11 +556,7 @@ export function ExamRoom() {
 
           <div className="stack gap-2">
             <div className="row gap-2 wrap">
-              <span className="badge badge-accent">
-                {settings.ruleProfile === 'strict'
-                  ? 'Strict — you dictate every mark'
-                  : 'Assisted — the writer may add punctuation'}
-              </span>
+              <span className="badge badge-accent">{RULE_PROFILES[settings.ruleProfile].full}</span>
               {supported ? (
                 <span className="badge badge-good">Microphone ready</span>
               ) : (
@@ -607,9 +626,7 @@ export function ExamRoom() {
 
         <ExamClock phaseEndsAt={phaseEndsAt} phase={phase} />
 
-        <span className="badge">
-          {settings.ruleProfile === 'strict' ? 'Strict scribe rules' : 'Assisted'}
-        </span>
+        <span className="badge">{RULE_PROFILES[settings.ruleProfile].short}</span>
         <span className="badge">{scribe.stats.words} words</span>
 
         <div className="spacer" />
@@ -683,7 +700,7 @@ export function ExamRoom() {
           <>
             <div className="pane pane-paper">
               {orgPaper ? (
-                <OrgPaperViewer paper={orgPaper} />
+                <OrgPaperViewer paper={orgPaper} assignedQuestionIds={assignedQuestionIds} />
               ) : paper ? (
                 <PaperViewer paper={paper} uid={user?.uid ?? ''} />
               ) : null}

@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { useReveal, useScrollY } from '../lib/useReveal'
+import { useReveal, useScrollProgress, useScrollY } from '../lib/useReveal'
 import { HomeDemo } from '../components/HomeDemo'
 
 function Reveal({ children, className = '', delay = 0 }: { children: ReactNode; className?: string; delay?: number }) {
@@ -16,11 +16,40 @@ function Reveal({ children, className = '', delay = 0 }: { children: ReactNode; 
   )
 }
 
+/** Each word fades and lifts in a beat after the last — the headline arrives the way dictation does. */
+function CascadeHeading({ text, className = '' }: { text: string; className?: string }) {
+  const { ref, visible } = useReveal<HTMLHeadingElement>(0.4)
+  const words = text.split(' ')
+  // The separating space has to sit outside the overflow-hidden word span, or
+  // it collapses to nothing and every word runs into the next.
+  const nodes: ReactNode[] = []
+  words.forEach((word, i) => {
+    if (i > 0) nodes.push(' ')
+    nodes.push(
+      <span key={i} className="cascade-word-wrap">
+        <span
+          className={`cascade-word ${visible ? 'cascade-word-in' : ''}`}
+          style={{ transitionDelay: visible ? `${i * 60}ms` : '0ms' }}
+        >
+          {word}
+        </span>
+      </span>,
+    )
+  })
+  return (
+    <h1 ref={ref} className={className}>
+      {nodes}
+    </h1>
+  )
+}
+
 export function Home() {
   const scrollY = useScrollY()
+  const progress = useScrollProgress()
 
   return (
     <div className="home">
+      <div className="home-progress" style={{ transform: `scaleX(${progress})` }} aria-hidden="true" />
       <header className="home-nav no-print">
         <Link to="/" className="brand">
           <span className="brand-mark">S</span>
@@ -41,13 +70,14 @@ export function Home() {
           style={{ transform: `translateY(${scrollY * 0.15}px)` }}
           aria-hidden="true"
         />
+        <div className="home-hero-shapes" aria-hidden="true">
+          <span className="home-shape home-shape-a" style={{ transform: `translateY(${scrollY * 0.08}px)` }} />
+          <span className="home-shape home-shape-b" style={{ transform: `translateY(${scrollY * -0.06}px)` }} />
+          <span className="home-shape home-shape-c" style={{ transform: `translateY(${scrollY * 0.12}px)` }} />
+        </div>
         <div className="home-hero-content">
           <span className="badge badge-accent home-eyebrow">For NESA exam writer provisions</span>
-          <h1 className="home-h1">
-            Practise with a writer
-            <br />
-            before the exam room does.
-          </h1>
+          <CascadeHeading className="home-h1" text="Practise with a writer before the exam room does." />
           <p className="home-lede">
             Scriber acts as your writer. It writes exactly what you say — nothing more — and it
             behaves like a real person: a beat of lag, a limited memory, and the occasional
@@ -72,6 +102,10 @@ export function Home() {
         <Reveal className="home-section-head">
           <span className="home-kicker">How it works</span>
           <h2 className="home-h2">Four steps, every time you practise.</h2>
+        </Reveal>
+
+        <Reveal className="home-steps-line-wrap" delay={40}>
+          <div className="home-steps-line" />
         </Reveal>
 
         <div className="home-steps">

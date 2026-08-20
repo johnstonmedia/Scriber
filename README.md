@@ -145,14 +145,25 @@ scripts/         security-rule checks and an end-to-end browser run
 5. Copy `.env.example` to `.env` and paste the values in, or edit the defaults in
    `src/lib/firebase.ts`.
 
-No Storage bucket is needed — exam papers never leave the device.
+A student's own exam papers never leave the device — only an organisation's
+*distributed* papers use Cloud Storage (see "Organisations" below), which
+needs the Blaze (pay-as-you-go) plan rather than the free Spark tier.
 
-Then publish the rules:
+Then publish the rules and indexes:
 
 ```bash
 npx firebase login
-npx firebase deploy --only firestore:rules,storage:rules
+npx firebase deploy --only firestore:rules,firestore:indexes,storage:rules
 ```
+
+`firestore:indexes` matters as much as the rules do — two of the organisation
+queries (`listMyMemberships`, `listMyPendingInvites`) are collection-group
+queries that Firestore refuses to run without their index deployed. Skipping
+this step doesn't error visibly: a user's own organisation just silently
+fails to show up as theirs, and the directory offers them "Request access"
+to something they already created or joined. Re-run this command any time
+`firestore.indexes.json` changes, and give a newly-created index a minute or
+two to finish building in the Firebase console before relying on it.
 
 Once deployed, add each domain you serve from under **Authentication →
 Settings → Authorised domains**, or Google sign-in will refuse to run there.

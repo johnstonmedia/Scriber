@@ -139,11 +139,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [canCreateOrg, setCanCreateOrg] = useState(false)
 
   const loadOrgState = useCallback(async (uid: string, email: string) => {
+    // Falls back to empty/false on failure so a network hiccup never blocks
+    // sign-in — but a query that needs a Firestore index not yet deployed
+    // (collection-group queries do) fails the same way, silently, unless
+    // it's at least logged: a missing index here reads to a user as "my
+    // organisation vanished," not as an error.
+    const logged = <T,>(label: string, promise: Promise<T>, fallback: T): Promise<T> =>
+      promise.catch((err) => {
+        console.error(`[org state] ${label} failed — falling back:`, err)
+        return fallback
+      })
     const [nextMemberships, nextInvites, nextSiteAdmin, nextCanCreateOrg] = await Promise.all([
-      listMyMemberships(uid).catch(() => []),
-      email ? listMyPendingInvites(email).catch(() => []) : Promise.resolve([]),
-      checkSiteAdmin(uid).catch(() => false),
-      email ? checkCanCreateOrg(email).catch(() => false) : Promise.resolve(false),
+      logged('listMyMemberships', listMyMemberships(uid), []),
+      email ? logged('listMyPendingInvites', listMyPendingInvites(email), []) : Promise.resolve([]),
+      logged('isSiteAdmin', checkSiteAdmin(uid), false),
+      email ? logged('canCreateOrg', checkCanCreateOrg(email), false) : Promise.resolve(false),
     ])
     setMemberships(nextMemberships)
     setPendingInvites(nextInvites)

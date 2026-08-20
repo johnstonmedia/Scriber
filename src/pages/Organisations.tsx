@@ -16,7 +16,7 @@ import {
  * access to. Creating a new organisation also happens here.
  */
 export function Organisations() {
-  const { user, memberships, pendingInvites, refreshMemberships } = useAuth()
+  const { user, memberships, pendingInvites, canCreateOrg, refreshMemberships } = useAuth()
   const navigate = useNavigate()
 
   const [directory, setDirectory] = useState<Organisation[]>([])
@@ -106,10 +106,19 @@ export function Organisations() {
             staff who can support your practice.
           </p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowCreate((v) => !v)}>
-          Create an organisation
-        </button>
+        {canCreateOrg && (
+          <button className="btn btn-primary" onClick={() => setShowCreate((v) => !v)}>
+            Create an organisation
+          </button>
+        )}
       </div>
+
+      {!canCreateOrg && (
+        <div className="alert alert-info" style={{ marginBottom: 16 }}>
+          Creating an organisation is by invitation — ask your site admin for access if your school
+          isn't here yet.
+        </div>
+      )}
 
       {error && <div className="alert alert-error" style={{ marginBottom: 16 }}>{error}</div>}
 

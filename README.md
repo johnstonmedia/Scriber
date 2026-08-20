@@ -157,6 +157,28 @@ npx firebase deploy --only firestore:rules,storage:rules
 Once deployed, add each domain you serve from under **Authentication →
 Settings → Authorised domains**, or Google sign-in will refuse to run there.
 
+### Creating the first site admin
+
+Site admin is a platform-wide role — organisations, members, classes and
+distributed papers across every school, never a student's own papers or
+dictated practice sessions (that boundary is enforced by `firestore.rules`,
+not the UI). It's also the only role that can grant an account permission to
+create a new organisation in the first place; nobody can self-serve one.
+
+There's no in-app way to create the *first* site admin, since granting it
+already requires being one. Create it by hand once:
+
+1. Have that person sign up in the app first, so their account exists.
+2. **Authentication → Users** — find them by email, copy their **User UID**.
+3. **Firestore Database** — create a collection named exactly `siteAdmins`
+   at the root, if it doesn't exist yet.
+4. Add a document whose **Document ID is that UID**, with any field at all
+   (existence is the only thing checked, e.g. `grantedAt: <today's date>`).
+
+They'll see a **Site admin** link after reloading. From there they can grant
+site admin to others, and grant specific emails permission to create an
+organisation, both from the Site Admin page — no more manual console work.
+
 ### Running it
 
 Requires Node 20+.

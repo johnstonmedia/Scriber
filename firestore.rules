@@ -15,7 +15,16 @@ rules_version = '2';
 //
 // siteAdmins/{uid} is a third, separate flag: platform-wide management
 // (accounts, organisations) with no access to any student's papers or
-// dictated answers. Its first entry is created manually — see README.
+// dictated answers. Its first entry is created manually — see README. A
+// site admin is treated as an admin of every organisation — isOrgAdmin()
+// and isOrgTeacher() below both fold it in — so they can step into any
+// school and actually help: rosters, classes, distributed papers, settings.
+// That reach stops firmly at users/{uid}/papers and /attempts above, which
+// grant no site-admin access at all, on purpose.
+//
+// orgCreators/{email} gates who may create a NEW organisation at all — only
+// a site admin, or an email a site admin has explicitly granted here, may.
+// Whoever creates an org still becomes its own admin, unchanged.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -82,6 +91,15 @@ service cloud.firestore {
       allow write: if isSiteAdmin();
     }
 
+    // Existence of a doc here is permission to create an organisation. Only
+    // a site admin can grant or revoke it; the invited email may read their
+    // own entry, so the client can show or hide the "create one" option.
+    match /orgCreators/{email} {
+      allow read: if isSiteAdmin()
+        || (isSignedIn() && request.auth.token.email != null && request.auth.token.email.lower() == email);
+      allow write: if isSiteAdmin();
+    }
+
     // ---------------------------------------------- collection-group queries
     //
     // Nested match blocks (below, under organisations/{orgId}) govern get and
@@ -109,9 +127,15 @@ service cloud.firestore {
       // Name/settings are not sensitive on their own, and a general user
       // needs to browse organisations to request access to one.
       allow read: if isSignedIn();
-      // Anyone can create one — they become its first admin via the members
-      // write below, in the same client-side transaction.
-      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
+      // Only a site admin, or an email a site admin has granted create
+      // access to, may start a new organisation — they become its first
+      // admin via the members write below, in the same client-side
+      // transaction.
+      allow create: if isSignedIn()
+        && request.resource.data.createdBy == request.auth.uid
+        && (isSiteAdmin()
+          || (request.auth.token.email != null
+            && exists(/databases/$(database)/documents/orgCreators/$(request.auth.token.email.lower()))));
       allow update, delete: if isOrgAdmin(orgId);
 
       match /members/{uid} {
@@ -189,7 +213,7 @@ service cloud.firestore {
         // Distribution is org-wide for any active member, regardless of
         // which class a paper is tagged against — classIds drives what the
         // dashboard highlights, not who is allowed to open it.
-        allow read: if isOrgMember(orgId);
+        allow read: if isOrgMember(orgId) || isSiteAdmin();
         allow write: if isOrgTeacher(orgId);
       }
     }

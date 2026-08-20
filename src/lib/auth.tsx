@@ -12,6 +12,8 @@ import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
   onAuthStateChanged,
+  reload,
+  sendEmailVerification,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut as firebaseSignOut,
@@ -54,6 +56,7 @@ export type Profile = {
   email: string
   name: string
   photoUrl: string | null
+  emailVerified: boolean
 }
 
 type AuthValue = {
@@ -69,6 +72,8 @@ type AuthValue = {
   siteAdmin: boolean
   /** Whether this account may create a new organisation — always true for a site admin. */
   canCreateOrg: boolean
+  /** False only for a brand-new account that hasn't been through the welcome walkthrough yet. */
+  onboarded: boolean
   /** Reload memberships/invites after joining, creating, or leaving an org. */
   refreshMemberships: () => Promise<void>
   signIn: (email: string, password: string) => Promise<void>
@@ -77,6 +82,12 @@ type AuthValue = {
   signOut: () => Promise<void>
   saveSettings: (next: Partial<Settings>) => Promise<void>
   updateName: (name: string) => Promise<void>
+  /** Marks the welcome walkthrough done — call once the user has picked personal or organisation. */
+  markOnboarded: () => Promise<void>
+  /** Re-sends the verification email Firebase sent on sign-up. */
+  sendVerificationEmail: () => Promise<void>
+  /** Firebase caches emailVerified client-side; call after the user says they've clicked the link. */
+  refreshEmailVerified: () => Promise<boolean>
 }
 
 const AuthContext = createContext<AuthValue | null>(null)
@@ -92,6 +103,7 @@ function toProfile(user: FirebaseUser): Profile {
     email: user.email ?? '',
     name: user.displayName || nameFromEmail(user.email ?? 'student'),
     photoUrl: user.photoURL,
+    emailVerified: user.emailVerified,
   }
 }
 
@@ -137,6 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([])
   const [siteAdmin, setSiteAdmin] = useState(false)
   const [canCreateOrg, setCanCreateOrg] = useState(false)
+  const [onboarded, setOnboarded] = useState(true)
 
   const loadOrgState = useCallback(async (uid: string, email: string) => {
     // Falls back to empty/false on failure so a network hiccup never blocks
@@ -176,6 +189,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setPendingInvites([])
         setSiteAdmin(false)
         setCanCreateOrg(false)
+        setOnboarded(true)
         setLoading(false)
         return
       }
@@ -190,14 +204,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const snapshot = await getDoc(userDoc)
         if (snapshot.exists()) {
           setSettings({ ...DEFAULT_SETTINGS, ...(snapshot.data().settings ?? {}) })
+          // Missing the field at all means this account predates the welcome
+          // walkthrough — never retroactively send an existing user through it.
+          setOnboarded(snapshot.data().onboarded !== false)
         } else {
           await setDoc(userDoc, {
             email: profile.email,
             name: profile.name,
             settings: DEFAULT_SETTINGS,
+            onboarded: false,
             createdAt: new Date().toISOString(),
           })
           setSettings(DEFAULT_SETTINGS)
+          setOnboarded(false)
         }
       } catch {
         // Offline or rules not deployed yet — practise with the defaults.
@@ -223,6 +242,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const displayName = name?.trim() || nameFromEmail(email)
       await updateProfile(credential.user, { displayName })
       setUser(toProfile({ ...credential.user, displayName } as FirebaseUser))
+      // Only email/password accounts need this — a Google sign-in arrives
+      // pre-verified. Never block on it: verification only gates organisation
+      // features, so a slow or failed send shouldn't stop sign-up itself.
+      await sendEmailVerification(credential.user).catch(() => undefined)
     } catch (error) {
       throw new Error(readableError(error))
     }
@@ -271,6 +294,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user],
   )
 
+  const markOnboarded = useCallback(async () => {
+    if (!user) return
+    await setDoc(doc(db, 'users', user.uid), { onboarded: true }, { merge: true })
+    setOnboarded(true)
+  }, [user])
+
+  const sendVerificationEmail = useCallback(async () => {
+    if (!auth.currentUser) return
+    await sendEmailVerification(auth.currentUser)
+  }, [])
+
+  const refreshEmailVerified = useCallback(async () => {
+    if (!auth.currentUser) return false
+    await reload(auth.currentUser)
+    const verified = auth.currentUser.emailVerified
+    // reload() only updates the User object's own .emailVerified property —
+    // Firestore rules read the claim baked into the ID token itself, which
+    // still reflects however things stood when it was last minted. Force a
+    // fresh one so a write immediately after this call isn't denied.
+    if (verified) await auth.currentUser.getIdToken(true)
+    setUser((current) => (current ? { ...current, emailVerified: verified } : current))
+    return verified
+  }, [])
+
   const value = useMemo<AuthValue>(
     () => ({
       user,
@@ -281,6 +328,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       pendingInvites,
       siteAdmin,
       canCreateOrg,
+      onboarded,
       refreshMemberships,
       signIn,
       signUp,
@@ -288,6 +336,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut,
       saveSettings,
       updateName,
+      markOnboarded,
+      sendVerificationEmail,
+      refreshEmailVerified,
     }),
     [
       user,
@@ -297,6 +348,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       pendingInvites,
       siteAdmin,
       canCreateOrg,
+      onboarded,
       refreshMemberships,
       signIn,
       signUp,
@@ -304,6 +356,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut,
       saveSettings,
       updateName,
+      markOnboarded,
+      sendVerificationEmail,
+      refreshEmailVerified,
     ],
   )
 

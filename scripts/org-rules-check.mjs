@@ -48,12 +48,42 @@ const check = (name, passed) => {
   console.log(`${passed ? '✓' : '✗ FAIL'}  ${name}`)
 }
 
+/**
+ * Completes real email verification through the emulator's own oobCode
+ * flow — the same mechanism a real "click the link in your email" does —
+ * rather than trying to fake the emailVerified flag directly, which the
+ * emulator refuses just like production does.
+ */
+async function verifyEmail(user) {
+  const idToken = await user.getIdToken()
+  await fetch(`http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=demo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestType: 'VERIFY_EMAIL', idToken }),
+  })
+  const oobCodes = await fetch(
+    `http://127.0.0.1:9099/emulator/v1/projects/${PROJECT_ID}/oobCodes`,
+  ).then((r) => r.json())
+  const code = oobCodes.oobCodes.at(-1)?.oobCode
+  if (!code) throw new Error(`no oobCode found for ${user.email}`)
+  await fetch(`http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:update?key=demo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ oobCode: code }),
+  })
+  await user.getIdToken(true)
+}
+
+/** Every account in this suite represents a real, completed sign-up — verified by default. */
 async function account(email) {
+  let user
   try {
-    return (await createUserWithEmailAndPassword(auth, email, 'practice123')).user
+    user = (await createUserWithEmailAndPassword(auth, email, 'practice123')).user
   } catch {
-    return (await signInWithEmailAndPassword(auth, email, 'practice123')).user
+    user = (await signInWithEmailAndPassword(auth, email, 'practice123')).user
   }
+  await verifyEmail(user)
+  return user
 }
 
 async function denied(label, operation) {
@@ -145,6 +175,127 @@ await denied('creating an org for someone else as createdBy is refused', async (
     createdBy: orgAdmin.uid, // not the caller
     createdAt: new Date().toISOString(),
     settings: {},
+  })
+})
+
+// ---------------------------------------------------- email verification gate
+
+const unverified = (
+  await createUserWithEmailAndPassword(auth, 'unverified@school.test', 'practice123')
+).user
+await adminDb.doc('orgCreators/unverified@school.test').set({
+  email: 'unverified@school.test',
+  grantedBy: 'test-harness',
+  grantedAt: new Date().toISOString(),
+})
+await denied('an unverified email cannot create an organisation, even with a creator grant', async () => {
+  await signInWithEmailAndPassword(auth, 'unverified@school.test', 'practice123')
+  await sleep(150)
+  await setDoc(doc(db, 'organisations', 'unverified-org'), {
+    name: 'Should not exist either',
+    createdBy: unverified.uid,
+    createdAt: new Date().toISOString(),
+    settings: {},
+  })
+})
+await denied('an unverified email cannot request to join an org', () =>
+  setDoc(doc(db, 'organisations', orgAId, 'joinRequests', unverified.uid), {
+    uid: unverified.uid,
+    email: 'unverified@school.test',
+    name: 'Unverified',
+    requestedAt: new Date().toISOString(),
+    status: 'pending',
+  }),
+)
+
+// ------------------------------------------------------------- org domains
+
+await signInAs('orgadmin@school.test')
+await allowed("an org admin can register a domain for their own org", () =>
+  setDoc(doc(db, 'orgDomains', 'school-a.test'), {
+    orgId: orgAId,
+    orgName: 'School A',
+    addedBy: orgAdmin.uid,
+    addedAt: new Date().toISOString(),
+  }),
+)
+
+await denied("a non-admin cannot register a domain for an org they belong to", async () => {
+  await signInAs('outsider@school.test')
+  await setDoc(doc(db, 'orgDomains', 'sneaky.test'), {
+    orgId: orgAId,
+    orgName: 'School A',
+    addedBy: outsider.uid,
+    addedAt: new Date().toISOString(),
+  })
+})
+
+const domainUnverified = (
+  await createUserWithEmailAndPassword(auth, 'newkid@school-a.test', 'practice123')
+).user
+await denied("an unverified email cannot domain-auto-join even with a matching domain", async () => {
+  await signInWithEmailAndPassword(auth, 'newkid@school-a.test', 'practice123')
+  await sleep(150)
+  await setDoc(doc(db, 'organisations', orgAId, 'members', domainUnverified.uid), {
+    uid: domainUnverified.uid,
+    orgName: 'School A',
+    email: 'newkid@school-a.test',
+    name: 'New Kid',
+    role: 'student',
+    status: 'active',
+    classIds: [],
+    joinedAt: new Date().toISOString(),
+  })
+})
+
+await verifyEmail(domainUnverified)
+// verifyEmail refreshed the token on this specific user-object reference,
+// not on whatever auth.currentUser now points to after the re-sign-in
+// inside the denied() check above — re-sign-in to pick up the fresh claim
+// the way every other operation in this script does.
+await signInAs('newkid@school-a.test')
+await allowed('a verified email on a registered domain joins instantly, as a student', () =>
+  setDoc(doc(db, 'organisations', orgAId, 'members', domainUnverified.uid), {
+    uid: domainUnverified.uid,
+    orgName: 'School A',
+    email: 'newkid@school-a.test',
+    name: 'New Kid',
+    role: 'student',
+    status: 'active',
+    classIds: [],
+    joinedAt: new Date().toISOString(),
+  }),
+)
+
+await denied('domain auto-join refuses a role other than student', async () => {
+  const other = (
+    await createUserWithEmailAndPassword(auth, 'wannabeadmin@school-a.test', 'practice123')
+  ).user
+  await verifyEmail(other)
+  await setDoc(doc(db, 'organisations', orgAId, 'members', other.uid), {
+    uid: other.uid,
+    orgName: 'School A',
+    email: 'wannabeadmin@school-a.test',
+    name: 'Wannabe Admin',
+    role: 'admin',
+    status: 'active',
+    classIds: [],
+    joinedAt: new Date().toISOString(),
+  })
+})
+
+await account('nomatch@elsewhere.test')
+await denied("a verified email whose domain isn't registered to any org cannot domain-auto-join", async () => {
+  await signInAs('nomatch@elsewhere.test')
+  await setDoc(doc(db, 'organisations', orgAId, 'members', auth.currentUser.uid), {
+    uid: auth.currentUser.uid,
+    orgName: 'School A',
+    email: 'nomatch@elsewhere.test',
+    name: 'No Match',
+    role: 'student',
+    status: 'active',
+    classIds: [],
+    joinedAt: new Date().toISOString(),
   })
 })
 

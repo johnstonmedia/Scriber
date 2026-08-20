@@ -70,6 +70,16 @@ export type Invite = {
   invitedBy: string
   createdAt: string
   status: 'pending' | 'accepted'
+  /** Set when a teacher invites straight into one of their classes — folded into acceptance. */
+  classId: string | null
+}
+
+export type OrgDomain = {
+  domain: string
+  orgId: string
+  orgName: string
+  addedBy: string
+  addedAt: string
 }
 
 export type JoinRequest = {
@@ -126,6 +136,10 @@ const invitesRef = (orgId: string) => collection(db, 'organisations', orgId, 'in
 const joinRequestsRef = (orgId: string) => collection(db, 'organisations', orgId, 'joinRequests')
 const classesRef = (orgId: string) => collection(db, 'organisations', orgId, 'classes')
 const orgPapersRef = (orgId: string) => collection(db, 'organisations', orgId, 'papers')
+const orgDomainsRef = collection(db, 'orgDomains')
+
+/** The part after @, lower-cased — the only thing that identifies a school's domain. */
+export const emailDomain = (email: string) => email.trim().toLowerCase().split('@')[1] ?? ''
 
 const normaliseEmail = (email: string) => email.trim().toLowerCase()
 
@@ -166,6 +180,18 @@ function toInvite(snapshot: QueryDocumentSnapshot<DocumentData>): Invite {
     invitedBy: String(data.invitedBy ?? ''),
     createdAt: isoOf(data.createdAt),
     status: data.status === 'accepted' ? 'accepted' : 'pending',
+    classId: typeof data.classId === 'string' ? data.classId : null,
+  }
+}
+
+function toOrgDomain(snapshot: QueryDocumentSnapshot<DocumentData>): OrgDomain {
+  const data = snapshot.data()
+  return {
+    domain: snapshot.id,
+    orgId: String(data.orgId ?? ''),
+    orgName: String(data.orgName ?? ''),
+    addedBy: String(data.addedBy ?? ''),
+    addedAt: isoOf(data.addedAt),
   }
 }
 
@@ -326,6 +352,8 @@ export async function inviteMember(
   email: string,
   role: OrgRole,
   invitedBy: string,
+  /** Set when a teacher invites straight from a class — folded in on acceptance. */
+  classId?: string,
 ): Promise<void> {
   await setDoc(doc(invitesRef(orgId), normaliseEmail(email)), {
     email: normaliseEmail(email),
@@ -333,6 +361,7 @@ export async function inviteMember(
     invitedBy,
     createdAt: serverTimestamp(),
     status: 'pending',
+    classId: classId ?? null,
   })
 }
 
@@ -376,6 +405,7 @@ export async function acceptInvite(
     throw new Error('That invitation is no longer available.')
   }
   const role = invite.data().role as OrgRole
+  const classId = typeof invite.data().classId === 'string' ? (invite.data().classId as string) : null
   const org = await getOrganisation(orgId)
 
   const batch = writeBatch(db)
@@ -391,6 +421,73 @@ export async function acceptInvite(
   })
   batch.update(doc(invitesRef(orgId), normaliseEmail(profile.email)), { status: 'accepted' })
   await batch.commit()
+
+  // A teacher inviting straight from a class carries that class along —
+  // folded in as a second step, same as adding an existing member does.
+  if (classId) {
+    await addStudentToClass(orgId, classId, profile.uid).catch(() => undefined)
+  }
+}
+
+// ---------------------------------------------------------------- domains
+
+/**
+ * An org can register several domains (or subdomains) against itself — a
+ * school with separate student/staff domains, or a multi-campus group —
+ * each pointing at the same org. Existence of a match is enough to join
+ * instantly, no admin approval step: the trust decision already happened
+ * when the org registered the domain.
+ */
+export async function findOrgByDomain(domain: string): Promise<OrgDomain | null> {
+  if (!domain) return null
+  const snapshot = await getDoc(doc(orgDomainsRef, domain))
+  if (!snapshot.exists()) return null
+  return toOrgDomain(snapshot as QueryDocumentSnapshot<DocumentData>)
+}
+
+export async function listOrgDomains(orgId: string): Promise<OrgDomain[]> {
+  const snapshot = await getDocs(query(orgDomainsRef, where('orgId', '==', orgId)))
+  return snapshot.docs.map(toOrgDomain)
+}
+
+export async function addOrgDomain(
+  orgId: string,
+  orgName: string,
+  domain: string,
+  addedBy: string,
+): Promise<void> {
+  await setDoc(doc(orgDomainsRef, domain.trim().toLowerCase()), {
+    orgId,
+    orgName,
+    addedBy,
+    addedAt: serverTimestamp(),
+  })
+}
+
+export async function removeOrgDomain(domain: string): Promise<void> {
+  await deleteDoc(doc(orgDomainsRef, domain))
+}
+
+/**
+ * Joins the org registered against this account's email domain, as an
+ * active student — the rules require a verified email for this, matching
+ * every other organisation action.
+ */
+export async function joinByDomain(
+  orgId: string,
+  profile: { uid: string; email: string; name: string },
+): Promise<void> {
+  const org = await getOrganisation(orgId)
+  await setDoc(doc(membersRef(orgId), profile.uid), {
+    uid: profile.uid,
+    orgName: org?.name ?? '',
+    email: profile.email,
+    name: profile.name,
+    role: 'student',
+    status: 'active',
+    classIds: [],
+    joinedAt: serverTimestamp(),
+  })
 }
 
 // -------------------------------------------------------------- join requests

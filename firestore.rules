@@ -41,6 +41,16 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/siteAdmins/$(request.auth.uid));
     }
 
+    // Gates *joining or creating* an organisation, not ongoing membership —
+    // an already-active member's own initial join already passed this once.
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function emailDomain() {
+      return request.auth.token.email.lower().split('@')[1];
+    }
+
     function member(orgId) {
       return get(/databases/$(database)/documents/organisations/$(orgId)/members/$(request.auth.uid));
     }
@@ -100,6 +110,18 @@ service cloud.firestore {
       allow write: if isSiteAdmin();
     }
 
+    // A domain (or subdomain) registered here lets anyone signing up with a
+    // matching, verified email address join that org instantly — no request,
+    // no admin approval, since the trust decision already happened when the
+    // org's own admin registered the domain. Readable by any signed-in user:
+    // the sign-up walkthrough has to look this up before the account has any
+    // membership doc to authorise anything else with.
+    match /orgDomains/{domain} {
+      allow read: if isSignedIn();
+      allow create: if isOrgAdmin(request.resource.data.orgId);
+      allow update, delete: if isOrgAdmin(resource.data.orgId);
+    }
+
     // ---------------------------------------------- collection-group queries
     //
     // Nested match blocks (below, under organisations/{orgId}) govern get and
@@ -131,11 +153,10 @@ service cloud.firestore {
       // access to, may start a new organisation — they become its first
       // admin via the members write below, in the same client-side
       // transaction.
-      allow create: if isSignedIn()
+      allow create: if isEmailVerified()
         && request.resource.data.createdBy == request.auth.uid
         && (isSiteAdmin()
-          || (request.auth.token.email != null
-            && exists(/databases/$(database)/documents/orgCreators/$(request.auth.token.email.lower()))));
+          || exists(/databases/$(database)/documents/orgCreators/$(request.auth.token.email.lower())));
       allow update, delete: if isOrgAdmin(orgId);
 
       match /members/{uid} {
@@ -151,7 +172,9 @@ service cloud.firestore {
 
         // Bootstrapping: whoever created the organisation may create their
         // own membership as its first admin — isOrgAdmin() can't grant this
-        // itself, since no membership exists yet for anyone to check.
+        // itself, since no membership exists yet for anyone to check. Email
+        // verification was already required to create the org in the first
+        // place, so it isn't re-checked here.
         allow create: if isOwner(uid)
           && request.resource.data.role == 'admin'
           && get(/databases/$(database)/documents/organisations/$(orgId)).data.createdBy == request.auth.uid;
@@ -161,11 +184,22 @@ service cloud.firestore {
         // and only with the role that invite actually grants — never a role
         // of their own choosing.
         allow create: if isOwner(uid)
-          && request.auth.token.email != null
+          && isEmailVerified()
           && exists(/databases/$(database)/documents/organisations/$(orgId)/invites/$(request.auth.token.email.lower()))
           && get(/databases/$(database)/documents/organisations/$(orgId)/invites/$(request.auth.token.email.lower())).data.status == 'pending'
           && request.resource.data.role == get(/databases/$(database)/documents/organisations/$(orgId)/invites/$(request.auth.token.email.lower())).data.role
           && request.resource.data.role in ['student', 'teacher']
+          && request.resource.data.status == 'active';
+
+        // Domain auto-join: a verified email whose domain is registered to
+        // this org may create their own membership directly, always as a
+        // student — teacher and admin still only ever come from an explicit
+        // invite, never from a domain match alone.
+        allow create: if isOwner(uid)
+          && isEmailVerified()
+          && exists(/databases/$(database)/documents/orgDomains/$(emailDomain()))
+          && get(/databases/$(database)/documents/orgDomains/$(emailDomain())).data.orgId == orgId
+          && request.resource.data.role == 'student'
           && request.resource.data.status == 'active';
       }
 
@@ -191,6 +225,7 @@ service cloud.firestore {
       match /joinRequests/{uid} {
         allow read: if isOwner(uid) || isOrgAdmin(orgId);
         allow create: if isOwner(uid)
+          && isEmailVerified()
           && request.resource.data.uid == uid
           && request.resource.data.status == 'pending';
         // The requester may withdraw their own pending request; an admin

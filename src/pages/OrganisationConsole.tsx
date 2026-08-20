@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import {
+  addOrgDomain,
   addStudentToClass,
   approveJoinRequest,
   createClass,
@@ -15,8 +16,10 @@ import {
   listJoinRequests,
   listMembers,
   listMyClasses,
+  listOrgDomains,
   listOrgPapers,
   removeMember,
+  removeOrgDomain,
   removeStudentFromClass,
   resetMemberPassword,
   revokeInvite,
@@ -28,6 +31,7 @@ import {
   type Membership,
   type Organisation,
   type OrgClass,
+  type OrgDomain,
   type OrgPaper,
   type OrgRole,
 } from '../lib/org'
@@ -64,6 +68,7 @@ export function OrganisationConsole() {
   const [members, setMembers] = useState<Membership[]>([])
   const [invites, setInvites] = useState<Invite[]>([])
   const [requests, setRequests] = useState<JoinRequest[]>([])
+  const [domains, setDomains] = useState<OrgDomain[]>([])
 
   const refresh = useCallback(async () => {
     if (!orgId || !user || !role) return
@@ -81,12 +86,14 @@ export function OrganisationConsole() {
         setMembers(await listMembers(orgId))
       }
       if (isAdmin) {
-        const [nextInvites, nextRequests] = await Promise.all([
+        const [nextInvites, nextRequests, nextDomains] = await Promise.all([
           listInvites(orgId),
           listJoinRequests(orgId),
+          listOrgDomains(orgId),
         ])
         setInvites(nextInvites)
         setRequests(nextRequests)
+        setDomains(nextDomains)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load this organisation.')
@@ -332,6 +339,7 @@ export function OrganisationConsole() {
                 orgId={orgId}
                 members={members}
                 canManage={isAdmin || (isStaff && c.teacherIds.includes(user!.uid))}
+                currentUid={user!.uid}
                 onChange={refresh}
               />
             ))}
@@ -456,6 +464,54 @@ export function OrganisationConsole() {
       )}
 
       {isAdmin && tab === 'settings' && org && (
+        <div className="stack gap-4">
+        <div className="card card-pad stack gap-3" style={{ maxWidth: 480 }}>
+          <h2>Auto-join domains</h2>
+          <p className="small muted" style={{ marginTop: -8 }}>
+            Anyone who verifies an email on one of these domains joins {org.name} automatically, as
+            a student — no invite or approval needed. Add every domain your school uses, including
+            separate student and staff domains.
+          </p>
+          <form
+            className="row gap-2"
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (!user) return
+              const form = new FormData(e.currentTarget)
+              const domain = String(form.get('domain') ?? '').trim().toLowerCase()
+              if (!domain) return
+              void addOrgDomain(orgId, org.name, domain, user.uid).then(() => {
+                e.currentTarget.reset()
+                void refresh()
+              })
+            }}
+          >
+            <input
+              className="input grow"
+              name="domain"
+              placeholder="student.northside.nsw.edu.au"
+              required
+              pattern="[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
+            />
+            <button className="btn btn-primary">Add</button>
+          </form>
+          {domains.length > 0 && (
+            <div className="stack gap-2">
+              {domains.map((d) => (
+                <div className="row gap-2" key={d.domain}>
+                  <span className="grow small mono">{d.domain}</span>
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    onClick={() => void removeOrgDomain(d.domain).then(refresh)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="card card-pad stack gap-3" style={{ maxWidth: 480 }}>
           <h2>{org.name}</h2>
           <p className="small muted">
@@ -482,6 +538,7 @@ export function OrganisationConsole() {
               Leave organisation
             </button>
           )}
+        </div>
         </div>
       )}
     </div>
@@ -555,16 +612,19 @@ function ClassCard({
   orgId,
   members,
   canManage,
+  currentUid,
   onChange,
 }: {
   orgClass: OrgClass
   orgId: string
   members: Membership[]
   canManage: boolean
+  currentUid: string
   onChange: () => void
 }) {
   const students = members.filter((m) => orgClass.studentIds.includes(m.uid))
   const available = members.filter((m) => m.role === 'student' && !orgClass.studentIds.includes(m.uid))
+  const [inviteNotice, setInviteNotice] = useState<string | null>(null)
 
   return (
     <article className="card card-pad stack gap-3">
@@ -609,6 +669,31 @@ function ClassCard({
           ))}
         </select>
       )}
+      {canManage && (
+        <form
+          className="row gap-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            const form = new FormData(e.currentTarget)
+            const email = String(form.get('email') ?? '').trim()
+            if (!email) return
+            void inviteMember(orgId, email, 'student', currentUid, orgClass.id).then(() => {
+              e.currentTarget.reset()
+              setInviteNotice(`Invited ${email} — they'll join this class once they sign up and verify their email.`)
+            })
+          }}
+        >
+          <input
+            className="input grow"
+            name="email"
+            type="email"
+            placeholder="Not on Scriber yet? Invite by email"
+            required
+          />
+          <button className="btn btn-sm btn-primary">Invite</button>
+        </form>
+      )}
+      {inviteNotice && <p className="small muted">{inviteNotice}</p>}
     </article>
   )
 }

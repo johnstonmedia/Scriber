@@ -79,10 +79,30 @@ export function HomeDemo() {
   const level = load(memory)
   const tone = loadTone(level)
 
+  const capacity = memory.settings.capacity
+
   return (
     <div className="demo-widget" ref={ref}>
       <div className={`demo-load-bar`} data-tone={tone}>
         <div className="demo-load-fill" style={{ width: `${level * 100}%` }} />
+      </div>
+      <div className="demo-context">
+        <span className="demo-context-label">
+          Writer's memory — {memory.pending.length} of {capacity} held
+        </span>
+        {Array.from({ length: capacity }).map((_, i) => {
+          const unit = memory.pending[i]
+          return (
+            <span
+              key={unit ? `${unit.burst}-${unit.heardAt}-${i}` : `empty-${i}`}
+              className="demo-context-slot"
+              data-empty={!unit}
+              data-tone={unit ? tone : undefined}
+            >
+              {unit?.text ?? ''}
+            </span>
+          )
+        })}
       </div>
       <div className="demo-sheet">
         {text || <span className="demo-placeholder">The writer is listening…</span>}
@@ -104,11 +124,14 @@ function commitUnits(state: ScribeState, units: PendingUnit[]): ScribeState {
     const burst = units[i]!.burst
     let end = i
     while (end < units.length && units[end]!.burst === burst) end++
-    const text = units
-      .slice(i, end)
-      .map((u) => u.text)
-      .join(' ')
-    next = applyUtterance(next, text, 'assisted', burst, end === units.length).state
+    const group = units.slice(i, end)
+    const text = group.map((u) => u.text).join(' ')
+    // As in the real exam room: the writer releases a burst's words a few at
+    // a time, so an assisted-mode period belongs only on the piece that
+    // actually reaches the end of the burst — never on every partial piece a
+    // drain tick happens to release, or it reads as a full stop after almost
+    // every word.
+    next = applyUtterance(next, text, 'assisted', burst, group[group.length - 1]!.lastOfBurst).state
     i = end
   }
   return next

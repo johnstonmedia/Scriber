@@ -11,6 +11,7 @@ import {
 import { AuthProvider, useAuth } from './lib/auth'
 import { Home } from './pages/Home'
 import { SignIn } from './pages/SignIn'
+import { Welcome } from './pages/Welcome'
 import { Dashboard } from './pages/Dashboard'
 import { ExamRoom } from './pages/ExamRoom'
 import { SessionReview } from './pages/SessionReview'
@@ -94,7 +95,7 @@ function TopBar() {
 }
 
 function Shell() {
-  const { user, loading } = useAuth()
+  const { user, loading, onboarded } = useAuth()
   const location = useLocation()
 
   if (loading) {
@@ -114,14 +115,27 @@ function Shell() {
     )
   }
 
-  // The exam room takes over the whole window — no chrome to distract.
-  const bare = location.pathname.startsWith('/exam')
+  // A brand-new account goes straight to the one-time walkthrough — every
+  // other route redirects there first, same as signed-out users land on
+  // /login before anything else.
+  if (!onboarded && location.pathname !== '/welcome') {
+    return (
+      <Routes>
+        <Route path="*" element={<Navigate to="/welcome" replace />} />
+      </Routes>
+    )
+  }
+
+  // The exam room and the welcome walkthrough take over the whole window —
+  // no chrome to distract.
+  const bare = location.pathname.startsWith('/exam') || location.pathname === '/welcome'
 
   return (
     <div className="app-shell">
       {!bare && <TopBar />}
       <Routes>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/welcome" element={<Welcome />} />
         <Route path="/exam" element={<ExamRoom />} />
         <Route path="/sessions/:id" element={<SessionReview />} />
         <Route path="/settings" element={<Settings />} />

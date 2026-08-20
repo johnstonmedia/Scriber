@@ -53,13 +53,62 @@ async function signUp(page, email, name) {
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Password').fill('practice123')
   await page.getByRole('button', { name: 'Create account' }).click()
+  // A brand-new account lands on the one-time welcome walkthrough first —
+  // "Personal account" is the plain path into the flows this script drives.
+  await page.waitForSelector('text=How will you be using Scriber?', { timeout: 20000 })
+  await page.getByRole('button', { name: 'Personal account' }).click()
   await page.waitForSelector(`text=Hello, ${name.split(' ')[0]}`, { timeout: 20000 })
+}
+
+/**
+ * Completes real email verification through the emulator's own oobCode
+ * flow. A plain page reload isn't enough afterwards — the Auth SDK reuses
+ * its still-valid cached ID token rather than minting a fresh one, so the
+ * browser's session would keep asserting the old, unverified claim. Signing
+ * out and back in forces a brand new token, the same way a real "click the
+ * verification link, then sign in again" would.
+ */
+async function verifyEmail(page, email) {
+  const signInResp = await fetch(
+    'http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=demo',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: 'practice123', returnSecureToken: true }),
+    },
+  ).then((r) => r.json())
+  await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=demo', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestType: 'VERIFY_EMAIL', idToken: signInResp.idToken }),
+  })
+  const oobCodes = await fetch('http://127.0.0.1:9099/emulator/v1/projects/demo-scriber/oobCodes').then((r) =>
+    r.json(),
+  )
+  const code = oobCodes.oobCodes.at(-1)?.oobCode
+  if (!code) throw new Error(`no oobCode found for ${email}`)
+  await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:update?key=demo', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ oobCode: code }),
+  })
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  await signIn(page, email)
+}
+
+async function signIn(page, email) {
+  await page.goto('http://localhost:5173/login', { waitUntil: 'domcontentloaded' })
+  await page.getByLabel('Email').fill(email)
+  await page.getByLabel('Password').fill('practice123')
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await page.waitForSelector('text=Hello,', { timeout: 20000 })
 }
 
 // -------------------------------------------------------------- 1. the org
 
 const adminPage = await newPage()
 await signUp(adminPage, emails.admin, 'Q Admin')
+await verifyEmail(adminPage, emails.admin)
 
 // Creating an organisation is by invitation — grant it exactly as a site
 // admin would from the Site Admin console before the real UI flow continues.

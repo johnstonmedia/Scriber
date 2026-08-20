@@ -28,9 +28,10 @@ import {
   type OrgRole,
 } from '../lib/org'
 import { canExtractQuestions, extractQuestions } from '../lib/questionExtract'
+import { ClassTests } from '../components/ClassTests'
 import { OrgAdminDashboard } from './OrgAdminDashboard'
 
-type Tab = 'papers' | 'classes' | 'members'
+type Tab = 'papers' | 'classes' | 'members' | 'tests'
 
 /**
  * One console, adapted to whoever is looking at it. A student sees their
@@ -229,6 +230,9 @@ export function OrganisationConsole() {
             Members
           </button>
         )}
+        <button className={`btn btn-sm ${tab === 'tests' ? 'btn-primary' : ''}`} onClick={() => setTab('tests')}>
+          Tests
+        </button>
       </div>
 
       {tab === 'papers' && (
@@ -363,6 +367,10 @@ export function OrganisationConsole() {
           ))}
           {members.length === 0 && <div className="empty" style={{ border: 'none' }}>No other members yet.</div>}
         </div>
+      )}
+
+      {tab === 'tests' && (
+        <ClassTests orgId={orgId} classes={myClasses} papers={papers} canCreate={isStaff} currentUid={user!.uid} />
       )}
     </div>
   )

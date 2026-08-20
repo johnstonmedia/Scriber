@@ -18,6 +18,7 @@ import { SessionReview } from './pages/SessionReview'
 import { Settings } from './pages/Settings'
 import { Organisations } from './pages/Organisations'
 import { OrganisationConsole } from './pages/OrganisationConsole'
+import { TestMonitor } from './pages/TestMonitor'
 import { SiteAdmin } from './pages/SiteAdmin'
 
 function useTheme() {
@@ -141,6 +142,7 @@ function Shell() {
         <Route path="/settings" element={<Settings />} />
         <Route path="/organisations" element={<Organisations />} />
         <Route path="/organisations/:orgId" element={<OrganisationConsole />} />
+        <Route path="/organisations/:orgId/tests/:testId" element={<TestMonitor />} />
         <Route path="/admin" element={<SiteAdmin />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

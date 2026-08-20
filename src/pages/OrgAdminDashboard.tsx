@@ -19,9 +19,19 @@ import {
   type OrgPaper,
   type OrgRole,
 } from '../lib/org'
+import { ClassTests } from '../components/ClassTests'
 import { ClassCard, QuestionAssignment } from './OrganisationConsole'
 
-type Section = 'overview' | 'roster' | 'classes' | 'papers' | 'requests' | 'domains' | 'settings' | 'integrations'
+type Section =
+  | 'overview'
+  | 'roster'
+  | 'classes'
+  | 'papers'
+  | 'tests'
+  | 'requests'
+  | 'domains'
+  | 'settings'
+  | 'integrations'
 
 type Props = {
   orgId: string
@@ -52,6 +62,7 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'roster', label: 'Roster' },
   { id: 'classes', label: 'Classes' },
   { id: 'papers', label: 'Papers' },
+  { id: 'tests', label: 'Tests' },
   { id: 'requests', label: 'Requests' },
   { id: 'domains', label: 'Auto-join domains' },
   { id: 'settings', label: 'Settings' },
@@ -332,6 +343,10 @@ export function OrgAdminDashboard(props: Props) {
                 )}
               </div>
             </div>
+          )}
+
+          {section === 'tests' && (
+            <ClassTests orgId={orgId} classes={myClasses} papers={papers} canCreate currentUid={user.uid} />
           )}
 
           {section === 'requests' && (

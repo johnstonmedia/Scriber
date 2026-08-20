@@ -4,6 +4,13 @@ import { useAuth } from '../lib/auth'
 import { createAttempt, getPaper, saveAttempt, type Paper } from '../lib/data'
 import { getOrgPaper, type OrgPaper } from '../lib/org'
 import { RULE_PROFILES } from '../lib/ruleProfile'
+import {
+  finishTestParticipant,
+  joinTestSession,
+  subscribeTestSession,
+  updateTestProgress,
+  type TestSession,
+} from '../lib/testSession'
 import { CommandDrawer } from '../components/CommandReference'
 import { PaperViewer } from '../components/PaperViewer'
 import { OrgPaperViewer } from '../components/OrgPaperViewer'
@@ -31,7 +38,7 @@ import {
   type PendingUnit,
 } from '../scribe/workingMemory'
 
-type Phase = 'setup' | 'reading' | 'working' | 'paused' | 'finished'
+type Phase = 'setup' | 'lobby' | 'reading' | 'working' | 'paused' | 'finished'
 
 type LogEntry = { at: number; heard: string; commands: string[] }
 
@@ -98,9 +105,12 @@ export function ExamRoom() {
 
   const paperId = params.get('paper')
   const orgId = params.get('org')
+  const testId = params.get('test')
   const [paper, setPaper] = useState<Paper | null>(null)
   const [orgPaper, setOrgPaper] = useState<OrgPaper | null>(null)
   const [attemptId, setAttemptId] = useState<string | null>(null)
+  const [test, setTest] = useState<TestSession | null>(null)
+  const testAttemptStarted = useRef(false)
 
   /** Whichever source this practice paper came from — personal or distributed. */
   const paperMeta = paper ?? orgPaper
@@ -135,7 +145,9 @@ export function ExamRoom() {
     latest: '',
   })
   const [listening, setListening] = useState(false)
-  const [phase, setPhase] = useState<Phase>('setup')
+  const [phase, setPhase] = useState<Phase>(() => (testId ? 'lobby' : 'setup'))
+  const phaseRef = useRef(phase)
+  phaseRef.current = phase
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([])
   const [notice, setNotice] = useState<string | null>(null)
   const [showCommands, setShowCommands] = useState(false)
@@ -169,8 +181,17 @@ export function ExamRoom() {
   const supported = useMemo(speechRecognitionSupported, [])
   const answerText = useMemo(() => render(scribe.atoms), [scribe.atoms])
 
-  const readingMs = (paperMeta?.readingMinutes ?? 5) * 60_000
-  const workingMs = ((paperMeta?.workingMinutes ?? 40) + extraMinutes) * 60_000
+  // In a live test, the teacher's standard for the whole class overrides the
+  // student's own personal preference — everything else in Settings (memory,
+  // read-back rate, font size) stays theirs.
+  const effectiveRuleProfile = test ? test.ruleProfile : settings.ruleProfile
+
+  const readingMs = testId
+    ? (test?.readingMinutes ?? 10) * 60_000
+    : (paperMeta?.readingMinutes ?? 5) * 60_000
+  const workingMs = testId
+    ? (test?.workingMinutes ?? 40) * 60_000
+    : ((paperMeta?.workingMinutes ?? 40) + extraMinutes) * 60_000
 
   // ------------------------------------------------------------------- load
 
@@ -189,6 +210,87 @@ export function ExamRoom() {
     }
   }, [paperId, orgId, user])
 
+  // ------------------------------------------------------------- live test
+
+  // The shared source of truth for a live test's phase and its deadline —
+  // every participant (and the teacher's monitor) watches the same doc.
+  useEffect(() => {
+    if (!orgId || !testId) return
+    return subscribeTestSession(orgId, testId, setTest)
+  }, [orgId, testId])
+
+  // Arriving in the waiting room marks this student ready — the teacher's
+  // monitor counts this the moment it lands.
+  useEffect(() => {
+    if (!orgId || !testId || !user) return
+    void joinTestSession(orgId, testId, { uid: user.uid, name: user.name })
+  }, [orgId, testId, user])
+
+  // A test's paper (if it has one) comes from the test doc, not a `paper=`
+  // URL param — there isn't one in test mode.
+  useEffect(() => {
+    if (!orgId || !test?.paperId) return
+    getOrgPaper(orgId, test.paperId)
+      .then(setOrgPaper)
+      .catch(() => setNotice('Could not load the test paper.'))
+  }, [orgId, test?.paperId])
+
+  // Mirrors the synced test phase onto this student's own view. The teacher
+  // controls reading → working; a student can never skip ahead of it, and a
+  // test the teacher ends is finished for every participant still in it,
+  // wherever they'd got to.
+  useEffect(() => {
+    if (!testId || !test) return
+    if (test.phase === 'lobby') {
+      setPhase('lobby')
+      return
+    }
+    if (test.phase === 'finished') {
+      if (phaseRef.current !== 'finished' && phaseRef.current !== 'setup' && phaseRef.current !== 'lobby') {
+        void finish()
+      } else {
+        setPhase('finished')
+      }
+      return
+    }
+    phaseEndsAt.current = test.phaseEndsAt
+    if (!testAttemptStarted.current) {
+      testAttemptStarted.current = true
+      void beginTestAttempt()
+    }
+    setPhase(test.phase)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [test, testId])
+
+  async function beginTestAttempt() {
+    startedAt.current = Date.now()
+    if (!user) return
+    try {
+      setAttemptId(
+        await createAttempt(user.uid, {
+          paperId: test?.paperId && orgId ? `org:${orgId}:${test.paperId}` : test ? `test:${orgId}:${test.id}` : null,
+          title: test?.title ?? 'Live test',
+          ruleProfile: effectiveRuleProfile,
+        }),
+      )
+    } catch {
+      setNotice('Working offline — this session will not be saved to your history.')
+    }
+  }
+
+  // Throttled progress the teacher's monitor can see — word count and a
+  // short trailing preview, not a full transcript, and not on every word.
+  useEffect(() => {
+    if (!orgId || !testId || !user || phase !== 'working') return
+    const id = window.setInterval(() => {
+      void updateTestProgress(orgId, testId, user.uid, {
+        wordCount: scribeRef.current.stats.words,
+        preview: render(scribeRef.current.atoms).slice(-200),
+      })
+    }, 8000)
+    return () => window.clearInterval(id)
+  }, [orgId, testId, user, phase])
+
   // -------------------------------------------------------------- the clock
 
   // Reading time hands over to working time on its own — scheduled once for
@@ -196,6 +298,10 @@ export function ExamRoom() {
   // ask "has it ended yet?" was re-rendering this whole page, PDF pane
   // included, four times a second for the entire reading period.
   useEffect(() => {
+    // A live test's reading → working handover is the teacher's call, driven
+    // by the synced test doc (see the "live test" effects above) — not a
+    // timer this client computes for itself.
+    if (testId) return
     if (phase !== 'reading') return
     const msLeft = Math.max(0, (phaseEndsAt.current ?? Date.now()) - Date.now())
     const id = window.setTimeout(() => {
@@ -203,7 +309,7 @@ export function ExamRoom() {
       setPhase('working')
     }, msLeft)
     return () => window.clearTimeout(id)
-  }, [phase, workingMs])
+  }, [phase, workingMs, testId])
 
   // ------------------------------------------------------------- the writer
 
@@ -253,7 +359,7 @@ export function ExamRoom() {
         // actually reaches the end of what the student said, never on every
         // partial piece a drain tick happens to release.
         const closeSentence = options?.forceClose || group[group.length - 1]!.lastOfBurst
-        const result = applyUtterance(state, text, settings.ruleProfile, burst, closeSentence)
+        const result = applyUtterance(state, text, effectiveRuleProfile, burst, closeSentence)
         state = result.state
         events.push(...result.events)
         i = end
@@ -263,7 +369,7 @@ export function ExamRoom() {
       setScribe(state)
       handleEvents(events, state)
     },
-    [settings.ruleProfile, handleEvents],
+    [effectiveRuleProfile, handleEvents],
   )
 
   const handleMemoryEvents = useCallback(
@@ -296,6 +402,11 @@ export function ExamRoom() {
       const heard = transcript.trim()
       if (!heard) return
 
+      // In a live test, reading time is enforced, not just suggested — the
+      // writer simply won't take anything down until the teacher moves the
+      // class into working time.
+      if (testId && phaseRef.current === 'reading') return
+
       // The writer has stopped and asked a question — whatever you say next is
       // the answer to it, not more of your essay.
       if (memoryRef.current.spellCheck) {
@@ -303,7 +414,7 @@ export function ExamRoom() {
         return
       }
 
-      const units = chunkUtterance(heard, settings.ruleProfile)
+      const units = chunkUtterance(heard, effectiveRuleProfile)
       if (units.length === 0) return
 
       const burst = ++burstRef.current
@@ -317,7 +428,7 @@ export function ExamRoom() {
         { at: Date.now() - startedAt.current, heard, commands: [] },
       ]
     },
-    [settings.ruleProfile, handleMemoryEvents],
+    [testId, effectiveRuleProfile, handleMemoryEvents],
   )
 
   // A test hook for driving the writer's long timers without waiting them out.
@@ -456,7 +567,7 @@ export function ExamRoom() {
   function submitSpelling(spoken: string) {
     const result = answerSpelling(memoryRef.current, spoken, {
       // Where spelling is assessed the writer must put down what was spelled.
-      writeStudentSpelling: settings.ruleProfile === 'strict',
+      writeStudentSpelling: effectiveRuleProfile === 'strict',
     })
     if (result.released.length === 0) return
     memoryRef.current = result.memory
@@ -510,6 +621,9 @@ export function ExamRoom() {
     setMemory(flushed.memory)
     commit(flushed.released, { forceClose: true })
     setPhase('finished')
+    if (testId && orgId && user) {
+      void finishTestParticipant(orgId, testId, user.uid).catch(() => undefined)
+    }
     if (!attemptId || !user) {
       setNotice('This session was not saved because Firebase was unreachable.')
       return
@@ -608,6 +722,33 @@ export function ExamRoom() {
     )
   }
 
+  if (phase === 'lobby') {
+    return (
+      <div className="page" style={{ maxWidth: 720 }}>
+        <div className="page-head">
+          <div className="grow">
+            <h1>{test?.title ?? 'Live test'}</h1>
+            <p className="muted">{test?.className ? `${test.className} · ` : ''}Waiting for teacher to begin exam</p>
+          </div>
+          <button className="btn btn-ghost" onClick={() => navigate('/')}>
+            Leave
+          </button>
+        </div>
+
+        <div className="card card-pad stack gap-4">
+          <div className="row gap-2 wrap">
+            <span className="badge badge-good">You're marked ready</span>
+            {test && <span className="badge badge-accent">{RULE_PROFILES[test.ruleProfile].full}</span>}
+          </div>
+          <p className="muted small">
+            The teacher will start the test for the whole class at once. This screen updates itself —
+            no need to refresh.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   const memoryLoad = load(memory)
   const tone = loadTone(memoryLoad)
   const toneLabel =
@@ -626,8 +767,9 @@ export function ExamRoom() {
 
         <ExamClock phaseEndsAt={phaseEndsAt} phase={phase} />
 
-        <span className="badge">{RULE_PROFILES[settings.ruleProfile].short}</span>
+        <span className="badge">{RULE_PROFILES[effectiveRuleProfile].short}</span>
         <span className="badge">{scribe.stats.words} words</span>
+        {testId && <span className="badge badge-accent">Live test</span>}
 
         <div className="spacer" />
 
@@ -639,15 +781,16 @@ export function ExamRoom() {
         <button className="btn btn-sm" onClick={() => setShowCommands(true)}>
           What to say
         </button>
-        {phase === 'paused' ? (
-          <button className="btn btn-sm btn-primary" onClick={resume}>
-            Resume
-          </button>
-        ) : (
-          <button className="btn btn-sm" onClick={pause}>
-            Pause
-          </button>
-        )}
+        {!testId &&
+          (phase === 'paused' ? (
+            <button className="btn btn-sm btn-primary" onClick={resume}>
+              Resume
+            </button>
+          ) : (
+            <button className="btn btn-sm" onClick={pause}>
+              Pause
+            </button>
+          ))}
         <button className="btn btn-sm btn-primary" onClick={() => void finish()}>
           Finish
         </button>
@@ -770,7 +913,7 @@ export function ExamRoom() {
               className="mic-button"
               data-live={listening}
               onClick={toggleMic}
-              disabled={!supported || phase === 'paused'}
+              disabled={!supported || phase === 'paused' || (!!testId && phase === 'reading')}
             >
               <span className="mic-dot" />
               {listening ? 'Listening — press to stop' : 'Start dictating'}
@@ -800,7 +943,7 @@ export function ExamRoom() {
                 onChange={(e) => setTyped(e.target.value)}
                 aria-label="Type your dictation"
               />
-              <button className="btn" type="submit" disabled={!typed.trim()}>
+              <button className="btn" type="submit" disabled={!typed.trim() || (!!testId && phase === 'reading')}>
                 Write
               </button>
             </form>

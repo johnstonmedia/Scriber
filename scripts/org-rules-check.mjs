@@ -466,6 +466,103 @@ await denied('a student cannot upload an org paper themselves', () =>
   }),
 )
 
+// ------------------------------------------------------------- live tests
+
+await signInAs('teacher@school.test')
+await allowed('a teacher can create a test for their class', () =>
+  setDoc(doc(db, 'organisations', orgAId, 'tests', 'test-1'), {
+    orgId: orgAId,
+    classId: 'class-1',
+    className: 'Year 12 English',
+    paperId: null,
+    title: 'Trial test',
+    ruleProfile: 'strict',
+    readingMinutes: 10,
+    workingMinutes: 40,
+    phase: 'lobby',
+    phaseEndsAt: null,
+    createdBy: teacher.uid,
+    createdAt: new Date().toISOString(),
+  }),
+)
+
+await denied('a student cannot create a test', async () => {
+  await signInAs('student@school.test')
+  await setDoc(doc(db, 'organisations', orgAId, 'tests', 'test-rogue'), {
+    orgId: orgAId,
+    classId: 'class-1',
+    className: 'Year 12 English',
+    paperId: null,
+    title: 'Rogue test',
+    ruleProfile: 'strict',
+    readingMinutes: 1,
+    workingMinutes: 1,
+    phase: 'lobby',
+    phaseEndsAt: null,
+    createdBy: student.uid,
+    createdAt: new Date().toISOString(),
+  })
+})
+
+await signInAs('student@school.test')
+await allowed("a student can join a test's waiting room as their own participant", () =>
+  setDoc(doc(db, 'organisations', orgAId, 'tests', 'test-1', 'participants', student.uid), {
+    uid: student.uid,
+    name: 'Student Person',
+    status: 'ready',
+    wordCount: 0,
+    preview: '',
+    updatedAt: new Date().toISOString(),
+  }),
+)
+
+await denied("a student cannot create a participant doc for someone else", () =>
+  setDoc(doc(db, 'organisations', orgAId, 'tests', 'test-1', 'participants', 'newkid@school-a.test'), {
+    uid: 'someone-else',
+    name: 'Not Me',
+    status: 'ready',
+    wordCount: 0,
+    preview: '',
+    updatedAt: new Date().toISOString(),
+  }),
+)
+
+await signInAs('newkid@school-a.test')
+await allowed("a second student can also join the same test's waiting room", () =>
+  setDoc(doc(db, 'organisations', orgAId, 'tests', 'test-1', 'participants', domainUnverified.uid), {
+    uid: domainUnverified.uid,
+    name: 'New Kid',
+    status: 'ready',
+    wordCount: 0,
+    preview: '',
+    updatedAt: new Date().toISOString(),
+  }),
+)
+await denied("a student cannot read another student's live progress", () =>
+  getDoc(doc(db, 'organisations', orgAId, 'tests', 'test-1', 'participants', student.uid)),
+)
+
+await denied('a student cannot advance the test out of the waiting room', () =>
+  updateDoc(doc(db, 'organisations', orgAId, 'tests', 'test-1'), {
+    phase: 'reading',
+    phaseEndsAt: Date.now() + 600_000,
+  }),
+)
+
+await signInAs('teacher@school.test')
+await allowed("a teacher can read every participant's live progress", () =>
+  getDoc(doc(db, 'organisations', orgAId, 'tests', 'test-1', 'participants', student.uid)),
+)
+await allowed('a teacher can start reading time', () =>
+  updateDoc(doc(db, 'organisations', orgAId, 'tests', 'test-1'), {
+    phase: 'reading',
+    phaseEndsAt: Date.now() + 600_000,
+  }),
+)
+await allowed('a teacher can end the test for everyone', () =>
+  updateDoc(doc(db, 'organisations', orgAId, 'tests', 'test-1'), { phase: 'finished', phaseEndsAt: null }),
+)
+
 // --------------------------------------------------- collection-group queries
 //
 // These are the queries listMyMemberships() and listMyPendingInvites() run —

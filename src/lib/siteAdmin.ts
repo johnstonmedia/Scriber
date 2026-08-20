@@ -55,6 +55,33 @@ export async function revokeSiteAdmin(uid: string): Promise<void> {
   await deleteDoc(doc(db, 'siteAdmins', uid))
 }
 
+const normaliseEmail = (email: string) => email.trim().toLowerCase()
+
+/** Whether this email may create a new organisation — checked against the caller's own email. */
+export async function canCreateOrg(email: string): Promise<boolean> {
+  if (!email) return false
+  const snapshot = await getDoc(doc(db, 'orgCreators', normaliseEmail(email)))
+  return snapshot.exists()
+}
+
+export async function listOrgCreators(): Promise<string[]> {
+  const snapshot = await getDocs(collection(db, 'orgCreators'))
+  return snapshot.docs.map((d) => d.id)
+}
+
+/** Only an existing site admin can grant this — enforced by the rules, not just this check. */
+export async function grantOrgCreator(email: string, grantedBy: string): Promise<void> {
+  await setDoc(doc(db, 'orgCreators', normaliseEmail(email)), {
+    email: normaliseEmail(email),
+    grantedBy,
+    grantedAt: new Date().toISOString(),
+  })
+}
+
+export async function revokeOrgCreator(email: string): Promise<void> {
+  await deleteDoc(doc(db, 'orgCreators', normaliseEmail(email)))
+}
+
 export async function getAccountProfile(uid: string): Promise<AccountProfile | null> {
   const snapshot = await getDoc(doc(db, 'users', uid))
   if (!snapshot.exists()) return null

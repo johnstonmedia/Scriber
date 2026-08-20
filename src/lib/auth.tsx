@@ -21,7 +21,7 @@ import {
 import { doc, getDoc, setDoc } from 'firebase/firestore'
 import { auth, db, firebaseConfigured } from './firebase'
 import { listMyMemberships, listMyPendingInvites, type Membership, type PendingInvite } from './org'
-import { isSiteAdmin as checkSiteAdmin } from './siteAdmin'
+import { isSiteAdmin as checkSiteAdmin, canCreateOrg as checkCanCreateOrg } from './siteAdmin'
 import { clearFiles } from './fileStore'
 
 export type Settings = {
@@ -67,6 +67,8 @@ type AuthValue = {
   pendingInvites: PendingInvite[]
   /** Platform-wide administrator — see siteAdmin.ts. Never grants content access. */
   siteAdmin: boolean
+  /** Whether this account may create a new organisation — always true for a site admin. */
+  canCreateOrg: boolean
   /** Reload memberships/invites after joining, creating, or leaving an org. */
   refreshMemberships: () => Promise<void>
   signIn: (email: string, password: string) => Promise<void>
@@ -134,16 +136,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [memberships, setMemberships] = useState<Membership[]>([])
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([])
   const [siteAdmin, setSiteAdmin] = useState(false)
+  const [canCreateOrg, setCanCreateOrg] = useState(false)
 
   const loadOrgState = useCallback(async (uid: string, email: string) => {
-    const [nextMemberships, nextInvites, nextSiteAdmin] = await Promise.all([
+    const [nextMemberships, nextInvites, nextSiteAdmin, nextCanCreateOrg] = await Promise.all([
       listMyMemberships(uid).catch(() => []),
       email ? listMyPendingInvites(email).catch(() => []) : Promise.resolve([]),
       checkSiteAdmin(uid).catch(() => false),
+      email ? checkCanCreateOrg(email).catch(() => false) : Promise.resolve(false),
     ])
     setMemberships(nextMemberships)
     setPendingInvites(nextInvites)
     setSiteAdmin(nextSiteAdmin)
+    setCanCreateOrg(nextSiteAdmin || nextCanCreateOrg)
   }, [])
 
   const refreshMemberships = useCallback(async () => {
@@ -160,6 +165,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setMemberships([])
         setPendingInvites([])
         setSiteAdmin(false)
+        setCanCreateOrg(false)
         setLoading(false)
         return
       }
@@ -264,6 +270,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       memberships,
       pendingInvites,
       siteAdmin,
+      canCreateOrg,
       refreshMemberships,
       signIn,
       signUp,
@@ -279,6 +286,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       memberships,
       pendingInvites,
       siteAdmin,
+      canCreateOrg,
       refreshMemberships,
       signIn,
       signUp,

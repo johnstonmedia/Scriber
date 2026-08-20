@@ -100,10 +100,27 @@ const rivalAdmin = await account('rivaladmin@rival.test')
 
 // -------------------------------------------------------- org A: creation
 
+await denied('a signed-in user with no org-creator grant cannot create an organisation', async () => {
+  await signInAs('student@school.test')
+  await setDoc(doc(db, 'organisations', 'blocked'), {
+    name: 'Should not exist',
+    createdBy: student.uid,
+    createdAt: new Date().toISOString(),
+    settings: {},
+  })
+})
+
+// Granted exactly as a site admin would from the Site Admin console.
+await adminDb.doc('orgCreators/orgadmin@school.test').set({
+  email: 'orgadmin@school.test',
+  grantedBy: 'test-harness',
+  grantedAt: new Date().toISOString(),
+})
+
 await account('orgadmin@school.test')
 await signInAs('orgadmin@school.test')
 const orgAId = 'org-a'
-await allowed('creator can create an organisation and become its admin', async () => {
+await allowed('a granted org-creator can create an organisation and become its admin', async () => {
   await setDoc(doc(db, 'organisations', orgAId), {
     name: 'School A',
     createdBy: orgAdmin.uid,
@@ -366,6 +383,11 @@ try {
 
 // ------------------------------------------------------------- cross-org isolation
 
+await adminDb.doc('orgCreators/rivaladmin@rival.test').set({
+  email: 'rivaladmin@rival.test',
+  grantedBy: 'test-harness',
+  grantedAt: new Date().toISOString(),
+})
 await signInAs('rivaladmin@rival.test')
 const orgBId = 'org-b'
 await setDoc(doc(db, 'organisations', orgBId), {
@@ -421,6 +443,50 @@ await denied("a site admin still cannot read a student's practice sessions", () 
 await allowed('a site admin can grant the role to someone else', () =>
   setDoc(doc(db, 'siteAdmins', rivalAdmin.uid), { grantedAt: new Date().toISOString() }),
 )
+
+// ---------------------------------------- site admin acting as any org's admin
+//
+// The whole point of the role: a site admin can step into a school they've
+// never joined and actually help — read its distributed papers, manage its
+// classes — the same way that school's own admin could.
+
+await allowed("a site admin can read school A's distributed papers without being a member", () =>
+  getDocs(collection(db, 'organisations', orgAId, 'papers')),
+)
+
+await allowed("a site admin can rename a class in an org they've never joined", () =>
+  updateDoc(doc(db, 'organisations', orgAId, 'classes', 'class-1'), { name: 'Year 12 English (renamed)' }),
+)
+
+await allowed('a site admin can create an organisation with no creator grant of their own', () =>
+  setDoc(doc(db, 'organisations', 'site-admin-org'), {
+    name: "Site admin's own org",
+    createdBy: outsider.uid,
+    createdAt: new Date().toISOString(),
+    settings: {},
+  }),
+)
+
+// ------------------------------------------------------------- org creators
+
+await allowed('a granted org-creator can read their own grant', async () => {
+  await signInAs('orgadmin@school.test')
+  const snap = await getDoc(doc(db, 'orgCreators', 'orgadmin@school.test'))
+  if (!snap.exists()) throw new Error('expected the grant to exist')
+})
+
+await denied("a signed-in user cannot read someone else's org-creator grant", () =>
+  getDoc(doc(db, 'orgCreators', 'rivaladmin@rival.test')),
+)
+
+await denied('a non-site-admin cannot grant themselves org-creator access', async () => {
+  await signInAs('student@school.test')
+  await setDoc(doc(db, 'orgCreators', 'student@school.test'), {
+    email: 'student@school.test',
+    grantedBy: student.uid,
+    grantedAt: new Date().toISOString(),
+  })
+})
 
 await adminApp.delete()
 

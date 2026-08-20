@@ -13,6 +13,22 @@ import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore'
 
 const DIR = '/tmp/claude-0/-home-user-Scriber/97982e6f-b430-573d-adfc-9832e4c933b6/scratchpad'
 const shot = (page, name) => page.screenshot({ path: `${DIR}/q-${name}.png`, fullPage: true })
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
+ * The UI shows "Hello, X" as soon as sign-up succeeds client-side, which can
+ * land before the users/{uid} Firestore doc it triggers has actually
+ * committed — an admin-SDK query run right after can miss it. Retry rather
+ * than race it.
+ */
+async function findUidByEmail(adminDb, email) {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const snap = await adminDb.collection('users').where('email', '==', email).get()
+    if (snap.docs[0]) return snap.docs[0].id
+    await sleep(300)
+  }
+  return undefined
+}
 
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' })
 const stamp = Date.now()
@@ -44,6 +60,18 @@ async function signUp(page, email, name) {
 
 const adminPage = await newPage()
 await signUp(adminPage, emails.admin, 'Q Admin')
+
+// Creating an organisation is by invitation — grant it exactly as a site
+// admin would from the Site Admin console before the real UI flow continues.
+const grantApp = initAdminApp({ projectId: 'demo-scriber' }, `grant-${stamp}`)
+const grantDb = getAdminFirestore(grantApp)
+await grantDb.doc(`orgCreators/${emails.admin}`).set({
+  email: emails.admin,
+  grantedBy: 'test-harness',
+  grantedAt: new Date().toISOString(),
+})
+await grantApp.delete()
+
 await adminPage.goto('http://localhost:5173/organisations', { waitUntil: 'domcontentloaded' })
 await adminPage.getByRole('button', { name: 'Create an organisation' }).click()
 await adminPage.getByLabel('Organisation name').fill(ORG_NAME)
@@ -109,8 +137,7 @@ await signUp(studentBothPage, emails.studentBoth, 'Student Both')
 
 const adminApp = initAdminApp({ projectId: 'demo-scriber' }, `seed-${stamp}`)
 const adminDb = getAdminFirestore(adminApp)
-const usersSnap = await adminDb.collection('users').where('email', '==', emails.studentBoth).get()
-const studentBothUid = usersSnap.docs[0]?.id
+const studentBothUid = await findUidByEmail(adminDb, emails.studentBoth)
 if (!studentBothUid) throw new Error('could not find studentBoth uid')
 
 // Seed straight into both classes via the admin bypass — the join-request/
@@ -164,12 +191,7 @@ await signUp(studentAPage, emails.studentAOnly, 'Student A Only')
 
 const checkApp = initAdminApp({ projectId: 'demo-scriber' }, `check-${stamp}`)
 const checkDb = getAdminFirestore(checkApp)
-let studentAUid
-for (let attempt = 0; attempt < 10 && !studentAUid; attempt++) {
-  const snap = await checkDb.collection('users').where('email', '==', emails.studentAOnly).get()
-  studentAUid = snap.docs[0]?.id
-  if (!studentAUid) await new Promise((resolve) => setTimeout(resolve, 300))
-}
+const studentAUid = await findUidByEmail(checkDb, emails.studentAOnly)
 if (!studentAUid) throw new Error('could not find studentAOnly uid')
 
 const classAFresh = await checkDb.doc(`organisations/${orgId}/classes/${classAId}`).get()

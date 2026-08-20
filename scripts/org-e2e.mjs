@@ -54,6 +54,18 @@ async function signIn(page, email) {
 
 const adminPage = await newPage()
 await signUp(adminPage, emails.admin, 'Org Admin')
+
+// Creating an organisation is by invitation — grant it exactly as a site
+// admin would from the Site Admin console before the real UI flow continues.
+const grantApp = initAdminApp({ projectId: 'demo-scriber' }, `grant-${stamp}`)
+const grantDb = getAdminFirestore(grantApp)
+await grantDb.doc(`orgCreators/${emails.admin}`).set({
+  email: emails.admin,
+  grantedBy: 'test-harness',
+  grantedAt: new Date().toISOString(),
+})
+await grantApp.delete()
+
 await adminPage.goto('http://localhost:5173/organisations', { waitUntil: 'domcontentloaded' })
 await adminPage.getByRole('button', { name: 'Create an organisation' }).click()
 await adminPage.getByLabel('Organisation name').fill(ORG_NAME)
@@ -160,9 +172,16 @@ await signUp(siteAdminPage, siteAdminEmail, 'Site Admin')
 
 const adminApp = initAdminApp({ projectId: 'demo-scriber' }, `admin-seed-${stamp}`)
 const adminDb = getAdminFirestore(adminApp)
-// Find the uid we just created via the client SDK's own record.
-const usersSnap = await adminDb.collection('users').where('email', '==', siteAdminEmail).get()
-const siteAdminUid = usersSnap.docs[0]?.id
+// Find the uid we just created via the client SDK's own record. The UI shows
+// "Hello, X" as soon as sign-up succeeds client-side, which can land before
+// the users/{uid} doc it triggers has actually committed — retry rather than
+// race it.
+let siteAdminUid
+for (let attempt = 0; attempt < 10 && !siteAdminUid; attempt++) {
+  const snap = await adminDb.collection('users').where('email', '==', siteAdminEmail).get()
+  siteAdminUid = snap.docs[0]?.id
+  if (!siteAdminUid) await new Promise((resolve) => setTimeout(resolve, 300))
+}
 if (!siteAdminUid) throw new Error('could not find the freshly created site admin uid')
 await adminDb.doc(`siteAdmins/${siteAdminUid}`).set({ grantedAt: new Date().toISOString() })
 await adminApp.delete()
@@ -173,6 +192,24 @@ await siteAdminPage.waitForSelector('text=Site admin', { timeout: 15000 })
 await siteAdminPage.waitForSelector(`text=${ORG_NAME}`, { timeout: 15000 })
 console.log('site admin sees the organisation')
 await shot(siteAdminPage, '05-site-admin')
+
+// The site admin never joined this org, but should be able to step in and
+// manage it — the new "acting as any org's admin" behaviour.
+await siteAdminPage.locator('.row', { hasText: ORG_NAME }).getByRole('link', { name: 'Open' }).click()
+await siteAdminPage.waitForSelector('text=You are viewing as site admin', { timeout: 15000 })
+await siteAdminPage.getByRole('button', { name: 'Members' }).click()
+await siteAdminPage.waitForSelector('text=Teacher Person', { timeout: 15000 })
+console.log('site admin opened an org they never joined and sees its roster')
+await shot(siteAdminPage, '06-site-admin-in-org')
+
+// General signup shouldn't grant org-creation rights.
+const randomEmail = `orge2e-random${stamp}@school.test`
+const randomPage = await newPage()
+await signUp(randomPage, randomEmail, 'Random Person')
+await randomPage.goto('http://localhost:5173/organisations', { waitUntil: 'domcontentloaded' })
+const createVisible = await randomPage.getByRole('button', { name: 'Create an organisation' }).isVisible().catch(() => false)
+if (createVisible) throw new Error('a freshly signed-up account should not be able to create an organisation')
+console.log('a freshly signed-up account correctly cannot create an organisation')
 
 console.log('\nALL ORG E2E STEPS PASSED')
 await browser.close()

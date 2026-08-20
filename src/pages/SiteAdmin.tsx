@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { resetMemberPassword } from '../lib/org'
 import {
   deleteOrganisation,
+  grantOrgCreator,
   listOrganisationsWithCounts,
+  listOrgCreators,
+  revokeOrgCreator,
   type OrganisationSummary,
 } from '../lib/siteAdmin'
 
@@ -13,18 +17,23 @@ import {
  * sessions; firestore.rules doesn't grant a site admin that access at all.
  */
 export function SiteAdmin() {
-  const { siteAdmin, loading } = useAuth()
+  const { user, siteAdmin, loading } = useAuth()
   const [orgs, setOrgs] = useState<OrganisationSummary[]>([])
+  const [creators, setCreators] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [lookupEmail, setLookupEmail] = useState('')
   const [lookupResult, setLookupResult] = useState<string | null>(null)
+  const [newCreatorEmail, setNewCreatorEmail] = useState('')
 
   useEffect(() => {
     if (!siteAdmin) return
     listOrganisationsWithCounts()
       .then(setOrgs)
       .catch((err) => setError(err instanceof Error ? err.message : 'Could not load organisations.'))
+    listOrgCreators()
+      .then(setCreators)
+      .catch(() => undefined)
   }, [siteAdmin])
 
   if (loading) return null
@@ -39,6 +48,10 @@ export function SiteAdmin() {
 
   async function refresh() {
     setOrgs(await listOrganisationsWithCounts())
+  }
+
+  async function refreshCreators() {
+    setCreators(await listOrgCreators())
   }
 
   return (
@@ -86,6 +99,50 @@ export function SiteAdmin() {
         {lookupResult && <p className="small muted">{lookupResult}</p>}
       </section>
 
+      <section className="card card-pad stack gap-3" style={{ marginBottom: 24, maxWidth: 480 }}>
+        <h2>Who can create an organisation</h2>
+        <p className="small muted" style={{ marginTop: -8 }}>
+          Signing up doesn't let anyone start a new organisation on their own — grant an email
+          access here first. Whoever creates one becomes its admin.
+        </p>
+        <form
+          className="row gap-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (!user) return
+            void grantOrgCreator(newCreatorEmail.trim(), user.uid).then(() => {
+              setNewCreatorEmail('')
+              void refreshCreators()
+            })
+          }}
+        >
+          <input
+            className="input grow"
+            type="email"
+            placeholder="principal@school.edu"
+            value={newCreatorEmail}
+            onChange={(e) => setNewCreatorEmail(e.target.value)}
+            required
+          />
+          <button className="btn btn-primary">Grant</button>
+        </form>
+        {creators.length > 0 && (
+          <div className="stack gap-2">
+            {creators.map((email) => (
+              <div className="row gap-2" key={email}>
+                <span className="grow small">{email}</span>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  onClick={() => void revokeOrgCreator(email).then(refreshCreators)}
+                >
+                  Revoke
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
       <section>
         <h2 style={{ marginBottom: 12 }}>Organisations</h2>
         {orgs.length === 0 ? (
@@ -105,6 +162,9 @@ export function SiteAdmin() {
                     {new Date(org.createdAt).toLocaleDateString('en-AU')}
                   </div>
                 </div>
+                <Link className="btn btn-sm" to={`/organisations/${org.id}`}>
+                  Open
+                </Link>
                 <button
                   className="btn btn-sm btn-danger"
                   onClick={() => {

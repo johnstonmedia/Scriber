@@ -43,11 +43,14 @@ type Tab = 'papers' | 'classes' | 'members' | 'requests' | 'settings'
  */
 export function OrganisationConsole() {
   const { orgId } = useParams<{ orgId: string }>()
-  const { user, memberships, refreshMemberships } = useAuth()
+  const { user, memberships, siteAdmin, refreshMemberships } = useAuth()
   const navigate = useNavigate()
 
   const membership = memberships.find((m) => m.orgId === orgId)
-  const role: OrgRole | null = membership?.role ?? null
+  // A site admin can step into any organisation as its admin, even without
+  // ever having joined it — firestore.rules grants this the same way.
+  const actingAsSiteAdmin = !membership && siteAdmin
+  const role: OrgRole | null = membership?.role ?? (siteAdmin ? 'admin' : null)
   const isStaff = role === 'teacher' || role === 'admin'
   const isAdmin = role === 'admin'
 
@@ -96,7 +99,7 @@ export function OrganisationConsole() {
 
   if (!orgId) return null
 
-  if (!membership) {
+  if (!membership && !siteAdmin) {
     return (
       <div className="page">
         <div className="alert alert-warn">
@@ -177,9 +180,15 @@ export function OrganisationConsole() {
     <div className="page">
       <div className="page-head">
         <div className="grow">
-          <h1>{org?.name ?? membership.orgName}</h1>
+          <h1>{org?.name ?? membership?.orgName ?? 'Organisation'}</h1>
           <p className="muted">
-            {role === 'admin' ? 'You are the admin' : role === 'teacher' ? 'You are a teacher' : 'You are a student'}
+            {actingAsSiteAdmin
+              ? 'You are viewing as site admin'
+              : role === 'admin'
+                ? 'You are the admin'
+                : role === 'teacher'
+                  ? 'You are a teacher'
+                  : 'You are a student'}
           </p>
         </div>
       </div>
@@ -452,20 +461,27 @@ export function OrganisationConsole() {
           <p className="small muted">
             Created {new Date(org.createdAt).toLocaleDateString('en-AU')}
           </p>
-          <button
-            className="btn btn-danger"
-            style={{ alignSelf: 'flex-start' }}
-            onClick={() => {
-              if (confirm(`Leave "${org.name}"? If you are the only admin, nobody else can manage it.`)) {
-                void removeMember(orgId, user!.uid).then(() => {
-                  void refreshMemberships()
-                  navigate('/organisations')
-                })
-              }
-            }}
-          >
-            Leave organisation
-          </button>
+          {actingAsSiteAdmin ? (
+            <p className="small muted">
+              You're viewing this as site admin, not a member — there's nothing here to leave.
+              Manage or delete this organisation from the <Link to="/admin">Site admin</Link> page.
+            </p>
+          ) : (
+            <button
+              className="btn btn-danger"
+              style={{ alignSelf: 'flex-start' }}
+              onClick={() => {
+                if (confirm(`Leave "${org.name}"? If you are the only admin, nobody else can manage it.`)) {
+                  void removeMember(orgId, user!.uid).then(() => {
+                    void refreshMemberships()
+                    navigate('/organisations')
+                  })
+                }
+              }}
+            >
+              Leave organisation
+            </button>
+          )}
         </div>
       )}
     </div>

@@ -315,6 +315,22 @@ export async function getOrganisation(orgId: string): Promise<Organisation | nul
   return toOrganisation(snapshot as QueryDocumentSnapshot<DocumentData>)
 }
 
+/** An admin renaming the org or changing its settings — the org doc itself, nothing else. */
+export async function updateOrganisation(
+  orgId: string,
+  updates: { name?: string; settings?: Partial<Organisation['settings']> },
+): Promise<void> {
+  const patch: Record<string, unknown> = {}
+  if (updates.name !== undefined) patch.name = updates.name.trim()
+  if (updates.settings) {
+    for (const [key, value] of Object.entries(updates.settings)) {
+      patch[`settings.${key}`] = value
+    }
+  }
+  if (Object.keys(patch).length === 0) return
+  await updateDoc(orgDoc(orgId), patch)
+}
+
 /** For the "request to join" directory — every org a signed-in user may browse. */
 export async function listOrganisationDirectory(): Promise<Organisation[]> {
   const snapshot = await getDocs(query(collection(db, 'organisations'), orderBy('name')))

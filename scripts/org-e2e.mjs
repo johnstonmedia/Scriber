@@ -117,7 +117,7 @@ const orgId = adminPage.url().split('/organisations/')[1]
 console.log('org created:', orgId)
 await shot(adminPage, '01-org-created')
 
-await adminPage.getByRole('button', { name: 'Members' }).click()
+await adminPage.getByRole('button', { name: 'Roster' }).click()
 await adminPage.getByPlaceholder('Invite by email').fill(emails.teacher)
 await adminPage.locator('select[name="role"]').selectOption('teacher')
 await adminPage.getByRole('button', { name: 'Invite' }).click()
@@ -241,7 +241,7 @@ await shot(siteAdminPage, '05-site-admin')
 // manage it — the new "acting as any org's admin" behaviour.
 await siteAdminPage.locator('.row', { hasText: ORG_NAME }).getByRole('link', { name: 'Open' }).click()
 await siteAdminPage.waitForSelector('text=You are viewing as site admin', { timeout: 15000 })
-await siteAdminPage.getByRole('button', { name: 'Members' }).click()
+await siteAdminPage.getByRole('button', { name: 'Roster' }).click()
 await siteAdminPage.waitForSelector('text=Teacher Person', { timeout: 15000 })
 console.log('site admin opened an org they never joined and sees its roster')
 await shot(siteAdminPage, '06-site-admin-in-org')

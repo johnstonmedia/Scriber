@@ -2,13 +2,10 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import {
-  addOrgDomain,
   addStudentToClass,
-  approveJoinRequest,
   createClass,
   deleteClass,
   deleteOrgPaper,
-  denyJoinRequest,
   getOrganisation,
   inviteMember,
   listAllClasses,
@@ -18,13 +15,8 @@ import {
   listMyClasses,
   listOrgDomains,
   listOrgPapers,
-  removeMember,
-  removeOrgDomain,
   removeStudentFromClass,
-  resetMemberPassword,
-  revokeInvite,
   setClassQuestions,
-  updateMemberRole,
   uploadOrgPaper,
   type Invite,
   type JoinRequest,
@@ -36,14 +28,16 @@ import {
   type OrgRole,
 } from '../lib/org'
 import { canExtractQuestions, extractQuestions } from '../lib/questionExtract'
+import { OrgAdminDashboard } from './OrgAdminDashboard'
 
-type Tab = 'papers' | 'classes' | 'members' | 'requests' | 'settings'
+type Tab = 'papers' | 'classes' | 'members'
 
 /**
  * One console, adapted to whoever is looking at it. A student sees their
  * classes and the papers assigned to them. A teacher additionally manages
- * classes and distributes papers. An admin additionally manages the roster,
- * invites, join requests and the organisation's own settings.
+ * classes, distributes papers, and sees the roster (read-only). An admin is
+ * routed to a wholly separate dashboard (OrgAdminDashboard) built for
+ * running the organisation itself, not for practising in it.
  */
 export function OrganisationConsole() {
   const { orgId } = useParams<{ orgId: string }>()
@@ -183,20 +177,40 @@ export function OrganisationConsole() {
     }
   }
 
+  if (isAdmin && org) {
+    return (
+      <OrgAdminDashboard
+        orgId={orgId}
+        org={org}
+        user={user!}
+        actingAsSiteAdmin={!!actingAsSiteAdmin}
+        classes={classes}
+        myClasses={myClasses}
+        papers={papers}
+        members={members}
+        invites={invites}
+        requests={requests}
+        domains={domains}
+        error={error}
+        notice={notice}
+        setError={setError}
+        setNotice={setNotice}
+        refresh={refresh}
+        navigate={navigate}
+        refreshMemberships={refreshMemberships}
+        handleCreateClass={handleCreateClass}
+        handleInvite={handleInvite}
+        handleUploadPaper={handleUploadPaper}
+      />
+    )
+  }
+
   return (
     <div className="page">
       <div className="page-head">
         <div className="grow">
           <h1>{org?.name ?? membership?.orgName ?? 'Organisation'}</h1>
-          <p className="muted">
-            {actingAsSiteAdmin
-              ? 'You are viewing as site admin'
-              : role === 'admin'
-                ? 'You are the admin'
-                : role === 'teacher'
-                  ? 'You are a teacher'
-                  : 'You are a student'}
-          </p>
+          <p className="muted">{role === 'teacher' ? 'You are a teacher' : 'You are a student'}</p>
         </div>
       </div>
 
@@ -214,22 +228,6 @@ export function OrganisationConsole() {
           <button className={`btn btn-sm ${tab === 'members' ? 'btn-primary' : ''}`} onClick={() => setTab('members')}>
             Members
           </button>
-        )}
-        {isAdmin && (
-          <>
-            <button
-              className={`btn btn-sm ${tab === 'requests' ? 'btn-primary' : ''}`}
-              onClick={() => setTab('requests')}
-            >
-              Requests{requests.length > 0 ? ` (${requests.length})` : ''}
-            </button>
-            <button
-              className={`btn btn-sm ${tab === 'settings' ? 'btn-primary' : ''}`}
-              onClick={() => setTab('settings')}
-            >
-              Settings
-            </button>
-          </>
         )}
       </div>
 
@@ -338,7 +336,7 @@ export function OrganisationConsole() {
                 orgClass={c}
                 orgId={orgId}
                 members={members}
-                canManage={isAdmin || (isStaff && c.teacherIds.includes(user!.uid))}
+                canManage={isStaff && c.teacherIds.includes(user!.uid)}
                 currentUid={user!.uid}
                 onChange={refresh}
               />
@@ -360,185 +358,10 @@ export function OrganisationConsole() {
                 <strong>{m.name}</strong>
                 <div className="small muted">{m.email}</div>
               </div>
-              {isAdmin ? (
-                <select
-                  className="input"
-                  style={{ maxWidth: 140 }}
-                  value={m.role}
-                  onChange={(e) =>
-                    void updateMemberRole(orgId, m.uid, e.target.value as OrgRole).then(refresh)
-                  }
-                >
-                  <option value="student">Student</option>
-                  <option value="teacher">Teacher</option>
-                  <option value="admin">Admin</option>
-                </select>
-              ) : (
-                <span className="badge">{m.role}</span>
-              )}
-              {isAdmin && (
-                <>
-                  <button
-                    className="btn btn-sm"
-                    onClick={() =>
-                      resetMemberPassword(m.email)
-                        .then(() => setNotice(`Password reset email sent to ${m.email}.`))
-                        .catch((err) => setError(err instanceof Error ? err.message : 'Could not send reset email.'))
-                    }
-                  >
-                    Reset password
-                  </button>
-                  <button
-                    className="btn btn-sm btn-danger"
-                    onClick={() => void removeMember(orgId, m.uid).then(refresh)}
-                  >
-                    Remove
-                  </button>
-                </>
-              )}
+              <span className="badge">{m.role}</span>
             </div>
           ))}
-
-          <div style={{ padding: '18px', borderTop: members.length > 0 ? '1px solid var(--line)' : 'none' }}>
-            <form className="row gap-2 wrap" onSubmit={handleInvite}>
-              <input name="email" type="email" className="input" placeholder="Invite by email" required style={{ maxWidth: 260 }} />
-              <select name="role" className="input" style={{ maxWidth: 140 }} defaultValue="student">
-                <option value="student">Student</option>
-                <option value="teacher">Teacher</option>
-                <option value="admin">Admin</option>
-              </select>
-              <button className="btn btn-primary">Invite</button>
-            </form>
-            {invites.filter((i) => i.status === 'pending').length > 0 && (
-              <div className="stack gap-2" style={{ marginTop: 14 }}>
-                {invites
-                  .filter((i) => i.status === 'pending')
-                  .map((invite) => (
-                    <div className="row gap-2" key={invite.email}>
-                      <span className="grow small">{invite.email} — invited as {invite.role}</span>
-                      <button
-                        className="btn btn-sm btn-ghost"
-                        onClick={() => void revokeInvite(orgId, invite.email).then(refresh)}
-                      >
-                        Revoke
-                      </button>
-                    </div>
-                  ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {isAdmin && tab === 'requests' && (
-        <div className="card">
-          {requests.length === 0 ? (
-            <div className="empty" style={{ border: 'none' }}>No pending requests.</div>
-          ) : (
-            requests.map((r, i) => (
-              <div
-                key={r.uid}
-                className="row gap-3"
-                style={{ padding: '14px 18px', borderTop: i === 0 ? 'none' : '1px solid var(--line)' }}
-              >
-                <div className="grow">
-                  <strong>{r.name}</strong>
-                  <div className="small muted">{r.email}</div>
-                </div>
-                <button
-                  className="btn btn-sm btn-primary"
-                  onClick={() => void approveJoinRequest(orgId, r).then(refresh)}
-                >
-                  Approve
-                </button>
-                <button
-                  className="btn btn-sm btn-ghost"
-                  onClick={() => void denyJoinRequest(orgId, r.uid).then(refresh)}
-                >
-                  Deny
-                </button>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
-      {isAdmin && tab === 'settings' && org && (
-        <div className="stack gap-4">
-        <div className="card card-pad stack gap-3" style={{ maxWidth: 480 }}>
-          <h2>Auto-join domains</h2>
-          <p className="small muted" style={{ marginTop: -8 }}>
-            Anyone who verifies an email on one of these domains joins {org.name} automatically, as
-            a student — no invite or approval needed. Add every domain your school uses, including
-            separate student and staff domains.
-          </p>
-          <form
-            className="row gap-2"
-            onSubmit={(e) => {
-              e.preventDefault()
-              if (!user) return
-              const form = new FormData(e.currentTarget)
-              const domain = String(form.get('domain') ?? '').trim().toLowerCase()
-              if (!domain) return
-              void addOrgDomain(orgId, org.name, domain, user.uid).then(() => {
-                e.currentTarget.reset()
-                void refresh()
-              })
-            }}
-          >
-            <input
-              className="input grow"
-              name="domain"
-              placeholder="student.northside.nsw.edu.au"
-              required
-              pattern="[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
-            />
-            <button className="btn btn-primary">Add</button>
-          </form>
-          {domains.length > 0 && (
-            <div className="stack gap-2">
-              {domains.map((d) => (
-                <div className="row gap-2" key={d.domain}>
-                  <span className="grow small mono">{d.domain}</span>
-                  <button
-                    className="btn btn-sm btn-ghost"
-                    onClick={() => void removeOrgDomain(d.domain).then(refresh)}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="card card-pad stack gap-3" style={{ maxWidth: 480 }}>
-          <h2>{org.name}</h2>
-          <p className="small muted">
-            Created {new Date(org.createdAt).toLocaleDateString('en-AU')}
-          </p>
-          {actingAsSiteAdmin ? (
-            <p className="small muted">
-              You're viewing this as site admin, not a member — there's nothing here to leave.
-              Manage or delete this organisation from the <Link to="/admin">Site admin</Link> page.
-            </p>
-          ) : (
-            <button
-              className="btn btn-danger"
-              style={{ alignSelf: 'flex-start' }}
-              onClick={() => {
-                if (confirm(`Leave "${org.name}"? If you are the only admin, nobody else can manage it.`)) {
-                  void removeMember(orgId, user!.uid).then(() => {
-                    void refreshMemberships()
-                    navigate('/organisations')
-                  })
-                }
-              }}
-            >
-              Leave organisation
-            </button>
-          )}
-        </div>
+          {members.length === 0 && <div className="empty" style={{ border: 'none' }}>No other members yet.</div>}
         </div>
       )}
     </div>
@@ -551,7 +374,7 @@ export function OrganisationConsole() {
  * unchecked for every question keeps seeing the whole paper, unchanged from
  * before this existed — assigning a subset is opt-in per class.
  */
-function QuestionAssignment({
+export function QuestionAssignment({
   paper,
   orgId,
   classes,
@@ -607,7 +430,7 @@ function QuestionAssignment({
   )
 }
 
-function ClassCard({
+export function ClassCard({
   orgClass,
   orgId,
   members,

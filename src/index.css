@@ -295,6 +295,30 @@ textarea.input {
 .page { width: min(1140px, 100%); margin: 0 auto; padding: 28px 24px 64px; }
 .page-wide { width: min(1500px, 100%); }
 
+.admin-layout { display: flex; gap: 28px; align-items: flex-start; }
+.admin-sidebar {
+  width: 200px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: sticky;
+  top: 24px;
+}
+.admin-sidebar .nav-link {
+  text-align: left;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+}
+.admin-content { flex: 1; min-width: 0; }
+@media (max-width: 760px) {
+  .admin-layout { flex-direction: column; }
+  .admin-sidebar { width: 100%; flex-direction: row; flex-wrap: wrap; position: static; }
+}
+
 .page-head {
   display: flex;
   align-items: flex-end;

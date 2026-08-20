@@ -578,6 +578,12 @@ export async function listAllClasses(orgId: string): Promise<OrgClass[]> {
   return snapshot.docs.map(toClass)
 }
 
+export async function getClass(orgId: string, classId: string): Promise<OrgClass | null> {
+  const snapshot = await getDoc(doc(classesRef(orgId), classId))
+  if (!snapshot.exists()) return null
+  return toClass(snapshot as QueryDocumentSnapshot<DocumentData>)
+}
+
 /** Only the classes a student belongs to — matches what the rules allow them to read. */
 export async function listMyClasses(orgId: string, uid: string): Promise<OrgClass[]> {
   const snapshot = await getDocs(

@@ -251,6 +251,24 @@ service cloud.firestore {
         allow read: if isOrgMember(orgId) || isSiteAdmin();
         allow write: if isOrgTeacher(orgId);
       }
+
+      match /tests/{testId} {
+        // Readable org-wide, same convention as papers — the UI filters to
+        // a student's own class. Any of the org's teachers or admins can
+        // run or take over monitoring a test, same reach they already have
+        // over classes and papers — it isn't locked to whoever created it.
+        allow read: if isOrgMember(orgId) || isSiteAdmin();
+        allow create: if isOrgTeacher(orgId) && request.resource.data.createdBy == request.auth.uid;
+        allow update, delete: if isOrgTeacher(orgId);
+
+        match /participants/{uid} {
+          // A student manages only their own progress row; the roster view
+          // (readiness counts, live word counts, answer previews) is for
+          // staff only — never other students.
+          allow read: if isOwner(uid) || isOrgTeacher(orgId);
+          allow create, update: if isOwner(uid) && request.resource.data.uid == uid;
+        }
+      }
     }
 
     // Anything not matched above is denied.

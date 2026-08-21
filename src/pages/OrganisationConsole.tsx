@@ -205,10 +205,18 @@ export function OrganisationConsole() {
 
   return (
     <div className="page">
-      <div className="page-head">
+      <div
+        className="page-head"
+        style={org ? { borderBottom: `3px solid ${org.branding.accentColor}` } : undefined}
+      >
+        {org?.branding.logoDataUrl && (
+          <img src={org.branding.logoDataUrl} alt="" style={{ height: 48, marginRight: 14 }} />
+        )}
         <div className="grow">
           <h1>{org?.name ?? membership?.orgName ?? 'Organisation'}</h1>
-          <p className="muted">{role === 'teacher' ? 'You are a teacher' : 'You are a student'}</p>
+          <p className="muted">
+            {org?.branding.tagline || (role === 'teacher' ? 'You are a teacher' : 'You are a student')}
+          </p>
         </div>
       </div>
 

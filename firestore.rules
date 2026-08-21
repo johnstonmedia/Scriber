@@ -101,6 +101,23 @@ service cloud.firestore {
       allow write: if isSiteAdmin();
     }
 
+    // A user asking for help after something failed. Write-only from their
+    // side: anyone signed in can file one, nobody but a site admin can read
+    // the queue back, so filing a report never exposes anything.
+    match /supportReports/{reportId} {
+      allow read, update, delete: if isSiteAdmin();
+      allow create: if isSignedIn();
+    }
+
+    // Platform-wide switches a site admin flips — currently just the
+    // "coming soon" lock. Readable by anyone (signed in or not) because the
+    // app has to know whether to show the holding page before it knows who
+    // is looking; only a site admin can flip it.
+    match /siteConfig/{docId} {
+      allow read: if true;
+      allow write: if isSiteAdmin();
+    }
+
     // Existence of a doc here is permission to create an organisation. Only
     // a site admin can grant or revoke it; the invited email may read their
     // own entry, so the client can show or hide the "create one" option.
@@ -266,7 +283,43 @@ service cloud.firestore {
           // (readiness counts, live word counts, answer previews) is for
           // staff only — never other students.
           allow read: if isOwner(uid) || isOrgTeacher(orgId);
-          allow create, update: if isOwner(uid) && request.resource.data.uid == uid;
+          // A student may write their own progress, but never the pause
+          // fields — being paused is a thing done TO them by a teacher, so a
+          // student's own write has to leave those exactly as they were.
+          allow create: if isOwner(uid)
+            && request.resource.data.uid == uid
+            && !request.resource.data.keys().hasAny(['paused', 'pauseEndsAt', 'pausedBy']);
+          allow update: if isOwner(uid)
+            && request.resource.data.uid == uid
+            && request.resource.data.get('paused', false) == resource.data.get('paused', false)
+            && request.resource.data.get('pauseEndsAt', null) == resource.data.get('pauseEndsAt', null)
+            && request.resource.data.get('pausedBy', null) == resource.data.get('pausedBy', null);
+          // Staff pause, resume and otherwise manage any participant row.
+          allow write: if isOrgTeacher(orgId);
+        }
+
+        // The test's own questions, snapshotted at creation. THIS is what
+        // makes a test confidential: unlike the org's papers library (which
+        // any member may read at any time), this document cannot be read by a
+        // student until the teacher has actually started the test. Before
+        // then the text never reaches their browser at all — not in memory,
+        // not in a network response, so there is nothing for dev tools to
+        // find. Staff can always read it, since they set the test up.
+        match /secure/{docId} {
+          allow read: if isOrgTeacher(orgId)
+            || (isOrgMember(orgId)
+              && get(/databases/$(database)/documents/organisations/$(orgId)/tests/$(testId)).data.phase in ['reading', 'working']);
+          allow write: if isOrgTeacher(orgId);
+        }
+
+        // Integrity events a student's own browser reports about itself —
+        // losing focus, a copy, a devtools shortcut. Append-only from the
+        // student's side: they may add to their own trail, and can never
+        // read it back, edit it or delete it. Staff read the whole feed.
+        match /alerts/{alertId} {
+          allow read: if isOrgTeacher(orgId);
+          allow create: if isOrgMember(orgId) && request.resource.data.uid == request.auth.uid;
+          allow update, delete: if isOrgTeacher(orgId);
         }
       }
     }

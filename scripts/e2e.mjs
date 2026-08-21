@@ -4,25 +4,32 @@ const DIR = '/tmp/claude-0/-home-user-Scriber/97982e6f-b430-573d-adfc-9832e4c933
 const shot = (page, name) => page.screenshot({ path: `${DIR}/fb-${name}.png` })
 
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' })
+// A fresh address per run — the emulator keeps accounts between runs, and
+// signing up twice with the same one lands on sign-in instead of onboarding.
+const EMAIL = `alex${Date.now()}@school.nsw.edu.au`
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
 
 const errors = []
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
 page.on('pageerror', (e) => errors.push(`PAGEERROR: ${e.message}`))
 
-await page.goto('http://localhost:5173/', { waitUntil: 'domcontentloaded' })
+// Signed out, / is the marketing page — sign-in lives at /login.
+await page.goto('http://localhost:5173/login', { waitUntil: 'domcontentloaded' })
 await shot(page, '01-signin')
 
 // --- create an account with email + password (Firebase Auth emulator)
 await page.getByRole('tab', { name: 'Create account' }).click()
 await page.getByLabel('Your name').fill('Alex Nguyen')
-await page.getByLabel('Email').fill('alex2@school.nsw.edu.au')
+await page.getByLabel('Email').fill(EMAIL)
 await page.getByLabel('Password').fill('practice123')
 await page.getByRole('button', { name: 'Create account' }).click()
-await page.waitForSelector('text=Hello, Alex', { timeout: 15000 })
+// A brand-new account lands on the one-time walkthrough first.
+await page.waitForSelector('text=How will you be using Scriber?', { timeout: 20000 })
+await page.getByRole('button', { name: 'Personal account' }).click()
+await page.waitForSelector('text=Hello, Alex', { timeout: 20000 })
 console.log('✓ email/password sign-up works')
 
-// --- upload a paper to the Storage emulator
+// --- upload a paper (file stays in IndexedDB; metadata goes to Firestore)
 await page.getByRole('button', { name: 'Upload a paper' }).click()
 await page.setInputFiles('#file', {
   name: 'english-p1.txt',
@@ -37,7 +44,7 @@ await page.fill('#year', '2023')
 await page.fill('#workingMinutes', '40')
 await page.getByRole('button', { name: 'Add paper' }).click()
 await page.waitForSelector('text=2023 English Advanced Paper 1', { timeout: 15000 })
-console.log('✓ upload to Storage + Firestore metadata works')
+console.log('✓ paper file kept locally + Firestore metadata works')
 await shot(page, '02-dashboard')
 
 // --- exam room
@@ -70,7 +77,7 @@ await shot(page, '04-review')
 
 // --- settings round-trip through Firestore
 await page.goto('http://localhost:5173/settings', { waitUntil: 'domcontentloaded' })
-await page.getByText('Assisted — the writer may add punctuation and capitals').click()
+await page.getByText('the writer may add punctuation and capitals').first().click()
 await page.waitForTimeout(800)
 await page.reload({ waitUntil: 'domcontentloaded' })
 await page.waitForTimeout(1500)
@@ -84,8 +91,10 @@ await shot(page, '05-settings')
 // --- sign out, sign back in, data still there
 await page.goto('http://localhost:5173/', { waitUntil: 'domcontentloaded' })
 await page.getByRole('button', { name: 'Sign out' }).click()
+// Signing out lands on the marketing page — sign-in is a separate route.
 await page.waitForSelector('text=Practise with a writer', { timeout: 10000 })
-await page.getByLabel('Email').fill('alex2@school.nsw.edu.au')
+await page.goto('http://localhost:5173/login', { waitUntil: 'domcontentloaded' })
+await page.getByLabel('Email').fill(EMAIL)
 await page.getByLabel('Password').fill('practice123')
 await page.getByRole('button', { name: 'Sign in' }).click()
 await page.waitForSelector('text=2023 English Advanced Paper 1', { timeout: 15000 })

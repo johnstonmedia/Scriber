@@ -182,46 +182,83 @@ console.log('teacher on monitor:', testId)
 // ------------------------------------------------------- 4. students join
 
 await studentAPage.goto(`http://localhost:5173/exam?org=${orgId}&test=${testId}`, { waitUntil: 'domcontentloaded' })
-await studentAPage.waitForSelector('text=Waiting for teacher to begin exam', { timeout: 15000 })
+await studentAPage.waitForSelector('text=Waiting for your supervisor to begin', { timeout: 15000 })
 await studentBPage.goto(`http://localhost:5173/exam?org=${orgId}&test=${testId}`, { waitUntil: 'domcontentloaded' })
-await studentBPage.waitForSelector('text=Waiting for teacher to begin exam', { timeout: 15000 })
+await studentBPage.waitForSelector('text=Waiting for your supervisor to begin', { timeout: 15000 })
 console.log('both students in the waiting room')
 
 await teacherPage.waitForSelector('text=Student A', { timeout: 15000 })
 await teacherPage.waitForSelector('text=Student B', { timeout: 15000 })
-const joinedStat = await teacherPage.locator('.stat', { hasText: 'Joined' }).locator('.value').innerText()
-if (!joinedStat.startsWith('2')) throw new Error(`expected 2 joined, monitor shows "${joinedStat}"`)
-console.log('teacher sees both students ready:', joinedStat)
+const joinedStat = await teacherPage.locator('.stat', { hasText: 'Logged on' }).locator('.value').innerText()
+if (!joinedStat.startsWith('2')) throw new Error(`expected 2 logged on, monitor shows "${joinedStat}"`)
+console.log('teacher sees both students logged on:', joinedStat)
 await shot(teacherPage, '01-lobby')
 
 // ------------------------------------------------------- 5. teacher starts it
 
-await teacherPage.getByRole('button', { name: 'Start test' }).click()
+await teacherPage.getByRole('button', { name: 'Begin test' }).click()
 await studentAPage.waitForSelector('text=READING', { timeout: 15000 })
 await studentBPage.waitForSelector('text=READING', { timeout: 15000 })
 console.log('reading time started for both students')
 
-// Reading time is enforced, not just suggested — dictation (mic disabled by
-// headless Chromium anyway, so this checks the typed-fallback path, which
-// isn't) must be locked out while it's on, in test mode specifically.
-await studentAPage.getByLabel('Type your dictation').fill('this is my answer full stop')
-const writeDisabledDuringReading = await studentAPage.getByRole('button', { name: 'Write' }).isDisabled()
-if (!writeDisabledDuringReading) throw new Error('student A could dictate during reading time — reading time is not enforced')
+// A live test is dictation only — the typed fallback that practice mode
+// offers must not exist here at all, in any phase.
+if (await studentAPage.getByLabel('Type your dictation').count()) {
+  throw new Error('the typed fallback is available in a live test — typing is not locked out')
+}
+console.log('typing is unavailable in a live test')
+
+// Reading time is enforced, not merely suggested: the writer takes nothing
+// down until the teacher moves the class on.
+if (!(await studentAPage.getByRole('button', { name: /Start dictating/ }).isDisabled())) {
+  throw new Error('student A could start dictating during reading time — reading time is not enforced')
+}
 console.log('dictation is locked out during reading time')
 
 // ------------------------------------------------------- 6. working time
 
-await studentAPage.waitForSelector('button:has-text("Write"):not([disabled])', { timeout: 90000 })
-await studentBPage.waitForSelector('text=Start dictating', { timeout: 90000 })
-console.log('working time began for both students on the teacher\'s clock')
+await studentAPage.waitForSelector('.mic-button:not([disabled])', { timeout: 90000 })
+await studentBPage.waitForSelector('.mic-button:not([disabled])', { timeout: 90000 })
+console.log("working time began for both students on the teacher's clock")
 
-await studentAPage.getByRole('button', { name: 'Write' }).click()
-await studentAPage.waitForTimeout(1500)
-console.log('student A dictated an answer')
+// Nobody hands up early — Finish stays locked until working time is over.
+if (!(await studentAPage.getByRole('button', { name: 'Finish' }).isDisabled())) {
+  throw new Error('student A could finish before working time was up')
+}
+console.log('finishing early is locked out')
 
 await teacherPage.waitForSelector('text=In progress', { timeout: 15000 })
 await shot(teacherPage, '02-working')
 console.log('monitor shows the test is in progress')
+
+// ------------------------------------------- 6b. integrity alerts reach the teacher
+
+await studentAPage.evaluate(() => document.dispatchEvent(new Event('copy')))
+await teacherPage.waitForSelector('text=Tried to copy', { timeout: 20000 })
+console.log("student A's copy attempt reached the teacher's alert feed")
+
+// --------------------------------------------- 6c. the teacher pauses one student
+
+teacherPage.once('dialog', (dialog) => dialog.accept(''))
+await teacherPage
+  .locator('.card')
+  .filter({ hasText: 'Student A' })
+  .getByRole('button', { name: 'Pause' })
+  .first()
+  .click()
+await studentAPage.waitForSelector('text=Your supervisor has paused your test', { timeout: 20000 })
+console.log('the teacher paused student A, and only student A')
+await studentBPage.waitForSelector('.mic-button:not([disabled])', { timeout: 5000 })
+await shot(studentAPage, '02b-paused')
+
+await teacherPage
+  .locator('.card')
+  .filter({ hasText: 'Student A' })
+  .getByRole('button', { name: 'Resume' })
+  .first()
+  .click()
+await studentAPage.waitForSelector('.mic-button', { timeout: 20000 })
+console.log('the teacher resumed student A')
 
 // -------------------------------------------------------- 7. teacher ends it
 

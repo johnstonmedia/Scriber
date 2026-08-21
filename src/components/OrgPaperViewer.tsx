@@ -1,8 +1,13 @@
 import { memo } from 'react'
-import type { OrgPaper } from '../lib/org'
+import type { ExtractedQuestion } from '../lib/questionSplit'
 
 type Props = {
-  paper: OrgPaper
+  /**
+   * Either an OrgPaper from the org's library, or a live test's own secure
+   * snapshot of one — the viewer only ever needs the title and the questions,
+   * and treating them the same keeps one renderer for both.
+   */
+  paper: { title: string; questions: ExtractedQuestion[] }
   /** This student's classes have a subset assigned — show just those questions. */
   assignedQuestionIds?: string[] | null
 }

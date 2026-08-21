@@ -736,6 +736,194 @@ await denied('a non-site-admin cannot grant themselves org-creator access', asyn
   })
 })
 
+// ------------------------------------------------- live test confidentiality
+//
+// The whole point of a live test: a student cannot reach the questions before
+// their teacher starts it, cannot pause themselves, and cannot read back the
+// integrity trail their own browser files.
+
+const testId = 'test-confidential'
+
+await allowed('a teacher can create a test and stash its questions', async () => {
+  await signInAs('teacher@school.test')
+  await setDoc(doc(db, 'organisations', orgAId, 'tests', testId), {
+    orgId: orgAId,
+    classId: 'class-a',
+    className: 'Class A',
+    paperId: 'paper-a',
+    title: 'Confidential test',
+    ruleProfile: 'strict',
+    readingMinutes: 10,
+    workingMinutes: 40,
+    phase: 'lobby',
+    phaseEndsAt: null,
+    scheduledAt: null,
+    createdBy: teacher.uid,
+    createdAt: new Date().toISOString(),
+  })
+  await setDoc(doc(db, 'organisations', orgAId, 'tests', testId, 'secure', 'paper'), {
+    title: 'Confidential test',
+    questions: [{ id: 'q1', index: 1, text: 'Discuss the causes of the war.' }],
+    classQuestions: {},
+  })
+})
+
+await denied('a student cannot read a test paper while the test is still in the lobby', async () => {
+  await signInAs('student@school.test')
+  const snap = await getDoc(doc(db, 'organisations', orgAId, 'tests', testId, 'secure', 'paper'))
+  // A rule refusal throws; an empty read would be a silent leak of a different
+  // kind, so treat "it came back missing" as a failure to actually deny.
+  if (!snap.exists()) throw Object.assign(new Error('missing'), { code: 'permission-denied' })
+})
+
+await allowed('a teacher can read the test paper before the test starts', async () => {
+  await signInAs('teacher@school.test')
+  const snap = await getDoc(doc(db, 'organisations', orgAId, 'tests', testId, 'secure', 'paper'))
+  if (!snap.exists()) throw new Error('expected the teacher to see the paper')
+})
+
+await allowed('starting the test opens the paper to its students', async () => {
+  await signInAs('teacher@school.test')
+  await updateDoc(doc(db, 'organisations', orgAId, 'tests', testId), {
+    phase: 'reading',
+    phaseEndsAt: Date.now() + 600_000,
+  })
+  await signInAs('student@school.test')
+  const snap = await getDoc(doc(db, 'organisations', orgAId, 'tests', testId, 'secure', 'paper'))
+  if (!snap.exists()) throw new Error('expected the student to see the paper once reading time began')
+})
+
+await denied('a student cannot rewrite the test paper', async () => {
+  await signInAs('student@school.test')
+  await setDoc(doc(db, 'organisations', orgAId, 'tests', testId, 'secure', 'paper'), { questions: [] })
+})
+
+await allowed('a student joins the test as a participant', async () => {
+  await signInAs('student@school.test')
+  await setDoc(doc(db, 'organisations', orgAId, 'tests', testId, 'participants', student.uid), {
+    uid: student.uid,
+    name: 'Student',
+    status: 'ready',
+    wordCount: 0,
+    preview: '',
+    updatedAt: new Date().toISOString(),
+  })
+})
+
+await denied('a student cannot pause their own live test', async () => {
+  await signInAs('student@school.test')
+  await updateDoc(doc(db, 'organisations', orgAId, 'tests', testId, 'participants', student.uid), {
+    paused: true,
+    pauseEndsAt: null,
+    pausedBy: student.uid,
+  })
+})
+
+await allowed('a teacher can pause one student', async () => {
+  await signInAs('teacher@school.test')
+  await updateDoc(doc(db, 'organisations', orgAId, 'tests', testId, 'participants', student.uid), {
+    paused: true,
+    pauseEndsAt: null,
+    pausedBy: teacher.uid,
+  })
+})
+
+await denied('a paused student cannot lift their own pause', async () => {
+  await signInAs('student@school.test')
+  await updateDoc(doc(db, 'organisations', orgAId, 'tests', testId, 'participants', student.uid), {
+    paused: false,
+  })
+})
+
+await allowed('a student can still report their own progress while paused', async () => {
+  await signInAs('student@school.test')
+  await updateDoc(doc(db, 'organisations', orgAId, 'tests', testId, 'participants', student.uid), {
+    uid: student.uid,
+    status: 'active',
+    wordCount: 12,
+    preview: 'the war ended',
+    updatedAt: new Date().toISOString(),
+  })
+})
+
+await allowed("a student's browser can file an integrity alert about itself", async () => {
+  await signInAs('student@school.test')
+  await setDoc(doc(db, 'organisations', orgAId, 'tests', testId, 'alerts', 'alert-1'), {
+    uid: student.uid,
+    name: 'Student',
+    type: 'tab-hidden',
+    detail: null,
+    at: new Date().toISOString(),
+  })
+})
+
+await denied('a student cannot file an alert in someone else\'s name', async () => {
+  await signInAs('student@school.test')
+  await setDoc(doc(db, 'organisations', orgAId, 'tests', testId, 'alerts', 'alert-2'), {
+    uid: teacher.uid,
+    name: 'Teacher',
+    type: 'copy',
+    detail: null,
+    at: new Date().toISOString(),
+  })
+})
+
+await denied('a student cannot read back their own integrity trail', () =>
+  getDocs(collection(db, 'organisations', orgAId, 'tests', testId, 'alerts')),
+)
+
+await denied('a student cannot delete an integrity alert', () =>
+  deleteDoc(doc(db, 'organisations', orgAId, 'tests', testId, 'alerts', 'alert-1')),
+)
+
+await allowed('a teacher reads the whole alert feed', async () => {
+  await signInAs('teacher@school.test')
+  const snap = await getDocs(collection(db, 'organisations', orgAId, 'tests', testId, 'alerts'))
+  if (snap.empty) throw new Error('expected at least one alert')
+})
+
+// A brand-new account, deliberately: by this point in the suite several of
+// the accounts above have been granted site admin, which legitimately reaches
+// everywhere. This one is nobody.
+await account('bystander@nowhere.test')
+
+await denied("someone outside the school cannot read its test paper", async () => {
+  await signInAs('bystander@nowhere.test')
+  const snap = await getDoc(doc(db, 'organisations', orgAId, 'tests', testId, 'secure', 'paper'))
+  if (!snap.exists()) throw Object.assign(new Error('missing'), { code: 'permission-denied' })
+})
+
+// --------------------------------------------------------------- site lock
+
+await allowed('anyone signed in can read the site lock', async () => {
+  await signInAs('student@school.test')
+  await getDoc(doc(db, 'siteConfig', 'site'))
+})
+
+await denied('a normal user cannot lock the site', () =>
+  setDoc(doc(db, 'siteConfig', 'site'), { locked: true }),
+)
+
+await allowed('a site admin can lock the site', async () => {
+  await signInAs('outsider@school.test')
+  await setDoc(doc(db, 'siteConfig', 'site'), { locked: false, message: 'Back soon.' })
+})
+
+// ----------------------------------------------------------- support reports
+
+await allowed('anyone signed in can file a support report', async () => {
+  await signInAs('student@school.test')
+  await setDoc(doc(db, 'supportReports', 'report-1'), {
+    code: 'SCR-200',
+    uid: student.uid,
+    at: new Date().toISOString(),
+  })
+})
+
+await denied('a normal user cannot read the support queue', () =>
+  getDocs(collection(db, 'supportReports')),
+)
+
 await adminApp.delete()
 
 const failed = results.filter((r) => !r.passed)

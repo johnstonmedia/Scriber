@@ -47,12 +47,16 @@ await page.addInitScript(() => {
   }
 })
 
-await page.goto('http://localhost:5173/', { waitUntil: 'domcontentloaded' })
+// Signed out, / is the marketing page — sign-in lives at /login.
+await page.goto('http://localhost:5173/login', { waitUntil: 'domcontentloaded' })
 await page.getByRole('tab', { name: 'Create account' }).click()
 await page.getByLabel('Your name').fill('Alex Nguyen')
 await page.getByLabel('Email').fill(`perf${Date.now()}@school.nsw.edu.au`)
 await page.getByLabel('Password').fill('practice123')
 await page.getByRole('button', { name: 'Create account' }).click()
+// A brand-new account lands on the one-time walkthrough first.
+await page.waitForSelector('text=How will you be using Scriber?', { timeout: 20000 })
+await page.getByRole('button', { name: 'Personal account' }).click()
 await page.waitForSelector('text=Hello, Alex', { timeout: 20000 })
 
 // A paper so the pane we're watching actually renders something.

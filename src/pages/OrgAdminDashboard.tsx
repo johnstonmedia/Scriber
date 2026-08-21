@@ -10,6 +10,7 @@ import {
   revokeInvite,
   updateMemberRole,
   updateOrganisation,
+  compressLogo,
   type Invite,
   type JoinRequest,
   type Membership,
@@ -21,6 +22,8 @@ import {
 } from '../lib/org'
 import { ClassTests } from '../components/ClassTests'
 import { ClassCard, QuestionAssignment } from './OrganisationConsole'
+import { ErrorNotice } from '../components/ErrorNotice'
+import { appError, type AppError } from '../lib/errors'
 
 type Section =
   | 'overview'
@@ -440,6 +443,10 @@ function OrgSettings({ orgId, org, user, actingAsSiteAdmin, navigate, refresh, r
   const [name, setName] = useState(org.name)
   const [ruleProfile, setRuleProfile] = useState(org.settings.defaultRuleProfile)
   const [allowJoinRequests, setAllowJoinRequests] = useState(org.settings.allowJoinRequests)
+  const [accentColor, setAccentColor] = useState(org.branding.accentColor)
+  const [tagline, setTagline] = useState(org.branding.tagline)
+  const [logoDataUrl, setLogoDataUrl] = useState(org.branding.logoDataUrl)
+  const [logoError, setLogoError] = useState<AppError | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
@@ -451,6 +458,7 @@ function OrgSettings({ orgId, org, user, actingAsSiteAdmin, navigate, refresh, r
       await updateOrganisation(orgId, {
         name,
         settings: { defaultRuleProfile: ruleProfile, allowJoinRequests },
+        branding: { accentColor, tagline, logoDataUrl },
       })
       await refresh()
       setSaved(true)
@@ -487,6 +495,67 @@ function OrgSettings({ orgId, org, user, actingAsSiteAdmin, navigate, refresh, r
           />
           List {org.name} in the directory and accept join requests
         </label>
+
+        <hr className="divider" />
+
+        <div>
+          <h3 style={{ margin: 0 }}>Branding</h3>
+          <p className="small muted" style={{ marginTop: 4 }}>
+            Shown to your students on this page and while they sit a test.
+          </p>
+        </div>
+        <div className="field">
+          <label htmlFor="orgTagline">Tagline</label>
+          <input
+            id="orgTagline"
+            className="input"
+            value={tagline}
+            placeholder="Excellence in every voice"
+            onChange={(e) => setTagline(e.target.value)}
+          />
+        </div>
+        <div className="field" style={{ maxWidth: 200 }}>
+          <label htmlFor="orgAccent">Accent colour</label>
+          <input
+            id="orgAccent"
+            type="color"
+            className="input"
+            value={accentColor}
+            onChange={(e) => setAccentColor(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="orgLogo">Logo</label>
+          <div className="row gap-3 wrap">
+            {logoDataUrl && <img src={logoDataUrl} alt="" style={{ height: 44 }} />}
+            <input
+              id="orgLogo"
+              type="file"
+              className="input grow"
+              accept="image/png,image/jpeg,image/webp"
+              onChange={async (e) => {
+                const file = e.target.files?.[0]
+                if (!file) return
+                setLogoError(null)
+                try {
+                  setLogoDataUrl(await compressLogo(file))
+                } catch (err) {
+                  setLogoError(appError('SCR-310', err))
+                }
+              }}
+            />
+            {logoDataUrl && (
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => setLogoDataUrl(null)}>
+                Remove
+              </button>
+            )}
+          </div>
+          <span className="tiny muted">
+            Shrunk to a small thumbnail and stored with the organisation — keep it simple.
+          </span>
+        </div>
+        <ErrorNotice error={logoError} onDismiss={() => setLogoError(null)} />
+
         <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} disabled={saving}>
           {saving ? 'Saving…' : 'Save settings'}
         </button>

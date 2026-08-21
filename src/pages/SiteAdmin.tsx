@@ -10,6 +10,7 @@ import {
   revokeOrgCreator,
   type OrganisationSummary,
 } from '../lib/siteAdmin'
+import { DEFAULT_SITE_CONFIG, setSiteLock, subscribeSiteConfig } from '../lib/siteConfig'
 
 /**
  * Platform-wide oversight — organisations and accounts, never content. There
@@ -68,6 +69,8 @@ export function SiteAdmin() {
 
       {error && <div className="alert alert-error" style={{ marginBottom: 16 }}>{error}</div>}
       {notice && <div className="alert alert-info" style={{ marginBottom: 16 }}>{notice}</div>}
+
+      <SiteLockPanel />
 
       <section className="card card-pad stack gap-3" style={{ marginBottom: 24, maxWidth: 480 }}>
         <h2>Look up an account</h2>
@@ -188,5 +191,72 @@ export function SiteAdmin() {
         )}
       </section>
     </div>
+  )
+}
+
+/**
+ * The "coming soon" switch. Locked, everyone but a signed-in site admin sees
+ * a holding page instead of the app — which means whoever flips this can
+ * still work on the site normally while it's shut to the world.
+ */
+function SiteLockPanel() {
+  const [config, setConfig] = useState(DEFAULT_SITE_CONFIG)
+  const [message, setMessage] = useState(DEFAULT_SITE_CONFIG.message)
+  const [touched, setTouched] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(
+    () =>
+      subscribeSiteConfig((next) => {
+        setConfig(next)
+        // Don't overwrite what's being typed right now.
+        if (!touched) setMessage(next.message)
+      }),
+    [touched],
+  )
+
+  return (
+    <section className="card card-pad stack gap-3" style={{ marginBottom: 24, maxWidth: 480 }}>
+      <div className="row gap-2">
+        <h2 className="grow" style={{ margin: 0 }}>
+          Site lock
+        </h2>
+        <span className={`badge ${config.locked ? 'badge-warn' : 'badge-good'}`}>
+          {config.locked ? 'Locked' : 'Open'}
+        </span>
+      </div>
+      <p className="small muted">
+        Locked, everyone sees a coming-soon page. You keep full access while signed in as a site
+        admin.
+      </p>
+      <div className="field">
+        <label htmlFor="lockMessage">What visitors see</label>
+        <input
+          id="lockMessage"
+          className="input"
+          value={message}
+          onChange={(e) => {
+            setTouched(true)
+            setMessage(e.target.value)
+          }}
+        />
+      </div>
+      <button
+        className={`btn ${config.locked ? 'btn-primary' : 'btn-danger'}`}
+        style={{ alignSelf: 'flex-start' }}
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true)
+          try {
+            await setSiteLock(!config.locked, message)
+            setTouched(false)
+          } finally {
+            setBusy(false)
+          }
+        }}
+      >
+        {config.locked ? 'Unlock the site' : 'Lock the site'}
+      </button>
+    </section>
   )
 }

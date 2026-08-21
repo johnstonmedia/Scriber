@@ -21,6 +21,8 @@ import { Organisations } from './pages/Organisations'
 import { OrganisationConsole } from './pages/OrganisationConsole'
 import { TestMonitor } from './pages/TestMonitor'
 import { SiteAdmin } from './pages/SiteAdmin'
+import { ComingSoon } from './pages/ComingSoon'
+import { DEFAULT_SITE_CONFIG, subscribeSiteConfig } from './lib/siteConfig'
 
 function useTheme() {
   const [theme, setTheme] = useState<'light' | 'dark'>(
@@ -97,14 +99,29 @@ function TopBar() {
 }
 
 function Shell() {
-  const { user, loading, onboarded, pendingInvites } = useAuth()
+  const { user, loading, onboarded, pendingInvites, siteAdmin } = useAuth()
   const location = useLocation()
+  const [siteConfig, setSiteConfig] = useState(DEFAULT_SITE_CONFIG)
+
+  useEffect(() => subscribeSiteConfig(setSiteConfig), [])
 
   if (loading) {
     return (
       <div style={{ display: 'grid', placeItems: 'center', height: '100vh' }} className="muted">
         Loading Scriber…
       </div>
+    )
+  }
+
+  // Locked, the whole platform is a holding page — except for a signed-in
+  // site admin, who works on it exactly as normal. /login stays reachable so
+  // there's still a way in.
+  if (siteConfig.locked && !siteAdmin) {
+    return (
+      <Routes>
+        <Route path="/login" element={<SignIn />} />
+        <Route path="*" element={<ComingSoon message={siteConfig.message} />} />
+      </Routes>
     )
   }
 

@@ -1,8 +1,16 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { createTestSession, subscribeClassTests, type TestPhase, type TestSession } from '../lib/testSession'
+import {
+  createTestSession,
+  subscribeClassTests,
+  JOIN_WINDOW_MS,
+  type TestPhase,
+  type TestSession,
+} from '../lib/testSession'
 import type { OrgClass, OrgPaper } from '../lib/org'
 import { RULE_PROFILES } from '../lib/ruleProfile'
+import { appError, type AppError } from '../lib/errors'
+import { ErrorNotice } from './ErrorNotice'
 
 const PHASE_LABEL: Record<TestPhase, string> = {
   lobby: 'Waiting room',
@@ -33,7 +41,7 @@ export function ClassTests({
   currentUid: string
 }) {
   const [testsByClass, setTestsByClass] = useState<Record<string, TestSession[]>>({})
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<AppError | null>(null)
 
   useEffect(() => {
     const unsubs = classes.map((c) =>
@@ -55,19 +63,26 @@ export function ClassTests({
     if (!cls) return
     const paperId = String(form.get('paperId') ?? '') || null
     const paper = paperId ? papers.find((p) => p.id === paperId) : null
+    const scheduled = String(form.get('scheduledAt') ?? '')
     try {
-      await createTestSession(orgId, currentUid, {
-        classId: cls.id,
-        className: cls.name,
-        paperId,
-        title: String(form.get('title') ?? '').trim() || paper?.title || `${cls.name} test`,
-        ruleProfile: form.get('ruleProfile') === 'assisted' ? 'assisted' : 'strict',
-        readingMinutes: Number(form.get('readingMinutes') ?? 10),
-        workingMinutes: Number(form.get('workingMinutes') ?? 40),
-      })
+      await createTestSession(
+        orgId,
+        currentUid,
+        {
+          classId: cls.id,
+          className: cls.name,
+          paperId,
+          title: String(form.get('title') ?? '').trim() || paper?.title || `${cls.name} test`,
+          ruleProfile: form.get('ruleProfile') === 'assisted' ? 'assisted' : 'strict',
+          readingMinutes: Number(form.get('readingMinutes') ?? 10),
+          workingMinutes: Number(form.get('workingMinutes') ?? 40),
+          scheduledAt: scheduled ? new Date(scheduled).getTime() : null,
+        },
+        paper,
+      )
       formEl.reset()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create that test.')
+      setError(appError('SCR-400', err))
     }
   }
 
@@ -120,12 +135,17 @@ export function ClassTests({
               <label htmlFor="testWorking">Working time (min)</label>
               <input id="testWorking" name="workingMinutes" type="number" className="input" defaultValue={40} />
             </div>
+            <div className="field">
+              <label htmlFor="testScheduled">Date and time</label>
+              <input id="testScheduled" name="scheduledAt" type="datetime-local" className="input" />
+              <span className="tiny muted">Students can enter the waiting room 5 minutes before this.</span>
+            </div>
           </div>
           <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} disabled={classes.length === 0}>
             Create test
           </button>
           {classes.length === 0 && <p className="small muted">Create a class first.</p>}
-          {error && <p className="small" style={{ color: 'var(--live)' }}>{error}</p>}
+          <ErrorNotice error={error} onDismiss={() => setError(null)} />
         </form>
       )}
 
@@ -136,28 +156,38 @@ export function ClassTests({
             <div key={c.id} className="card card-pad stack gap-2">
               <strong>{c.name}</strong>
               {tests.length === 0 && <span className="small muted">No tests yet.</span>}
-              {tests.map((t) => (
-                <div className="row gap-3 wrap" key={t.id}>
-                  <div className="grow">
-                    <span className="small">{t.title}</span>
-                    <div className="tiny muted">{RULE_PROFILES[t.ruleProfile].short}</div>
-                  </div>
-                  <span className={`badge ${t.phase === 'working' || t.phase === 'reading' ? 'badge-live' : t.phase === 'finished' ? '' : 'badge-accent'}`}>
-                    {PHASE_LABEL[t.phase]}
-                  </span>
-                  {canCreate ? (
-                    <Link className="btn btn-sm btn-primary" to={`/organisations/${orgId}/tests/${t.id}`}>
-                      Monitor
-                    </Link>
-                  ) : (
-                    t.phase !== 'finished' && (
-                      <Link className="btn btn-sm btn-primary" to={`/exam?org=${orgId}&test=${t.id}`}>
-                        Join
+              {tests.map((t) => {
+                const open =
+                  t.scheduledAt === null || t.phase !== 'lobby' || Date.now() >= t.scheduledAt - JOIN_WINDOW_MS
+                return (
+                  <div className="row gap-3 wrap" key={t.id}>
+                    <div className="grow">
+                      <span className="small">{t.title}</span>
+                      <div className="tiny muted">
+                        {RULE_PROFILES[t.ruleProfile].short}
+                        {t.scheduledAt ? ` · ${new Date(t.scheduledAt).toLocaleString('en-AU')}` : ''}
+                      </div>
+                    </div>
+                    <span className={`badge ${t.phase === 'working' || t.phase === 'reading' ? 'badge-live' : t.phase === 'finished' ? '' : 'badge-accent'}`}>
+                      {PHASE_LABEL[t.phase]}
+                    </span>
+                    {canCreate ? (
+                      <Link className="btn btn-sm btn-primary" to={`/organisations/${orgId}/tests/${t.id}`}>
+                        Monitor
                       </Link>
-                    )
-                  )}
-                </div>
-              ))}
+                    ) : (
+                      t.phase !== 'finished' &&
+                      (open ? (
+                        <Link className="btn btn-sm btn-primary" to={`/exam?org=${orgId}&test=${t.id}`}>
+                          Start test
+                        </Link>
+                      ) : (
+                        <span className="badge">Opens 5 min before</span>
+                      ))
+                    )}
+                  </div>
+                )
+              })}
             </div>
           )
         })}

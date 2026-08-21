@@ -23,12 +23,16 @@ const errors = []
 page.on('pageerror', (e) => errors.push(e.message))
 
 const email = `local${Date.now()}@school.nsw.edu.au`
-await page.goto('http://localhost:5173/', { waitUntil: 'domcontentloaded' })
+// Signed out, / is the marketing page — sign-in lives at /login.
+await page.goto('http://localhost:5173/login', { waitUntil: 'domcontentloaded' })
 await page.getByRole('tab', { name: 'Create account' }).click()
 await page.getByLabel('Your name').fill('Alex Nguyen')
 await page.getByLabel('Email').fill(email)
 await page.getByLabel('Password').fill('practice123')
 await page.getByRole('button', { name: 'Create account' }).click()
+// A brand-new account lands on the one-time walkthrough first.
+await page.waitForSelector('text=How will you be using Scriber?', { timeout: 20000 })
+await page.getByRole('button', { name: 'Personal account' }).click()
 await page.waitForSelector('text=Hello, Alex', { timeout: 20000 })
 
 // --- add a paper -----------------------------------------------------------
@@ -81,7 +85,7 @@ if (storageCalls.length) throw new Error('a Cloud Storage request was made')
 // --- a second device: same account, empty IndexedDB ------------------------
 const second = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 const other = await second.newPage()
-await other.goto('http://localhost:5173/', { waitUntil: 'domcontentloaded' })
+await other.goto('http://localhost:5173/login', { waitUntil: 'domcontentloaded' })
 await other.getByLabel('Email').fill(email)
 await other.getByLabel('Password').fill('practice123')
 await other.getByRole('button', { name: 'Sign in' }).click()

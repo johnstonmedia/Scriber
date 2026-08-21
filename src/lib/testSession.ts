@@ -15,6 +15,7 @@ import {
   collection,
   doc,
   getDoc,
+  limit,
   onSnapshot,
   orderBy,
   query,
@@ -28,6 +29,8 @@ import {
 } from 'firebase/firestore'
 import { db } from './firebase'
 import type { RuleProfile } from './ruleProfile'
+import type { OrgPaper } from './org'
+import type { ExtractedQuestion } from './questionSplit'
 
 export type TestPhase = 'lobby' | 'reading' | 'working' | 'finished'
 
@@ -44,6 +47,8 @@ export type TestSession = {
   phase: TestPhase
   /** Epoch ms the current phase (reading or working) ends — null in lobby. */
   phaseEndsAt: number | null
+  /** Epoch ms this test is scheduled to run — null means no fixed time. */
+  scheduledAt: number | null
   createdBy: string
   createdAt: string
 }
@@ -58,6 +63,33 @@ export type TestParticipant = {
   /** The last ~200 characters the student has written, for the teacher's live view. */
   preview: string
   updatedAt: string
+  /** Set by a teacher, never the student themselves — see pauseParticipant. */
+  paused: boolean
+  /** Epoch ms the pause lifts on its own — null means it waits for the teacher to resume it manually. */
+  pauseEndsAt: number | null
+  pausedBy: string | null
+}
+
+/** How long before a test's scheduled time a student may enter the waiting room. */
+export const JOIN_WINDOW_MS = 5 * 60_000
+
+export type IntegrityAlertType =
+  | 'tab-hidden'
+  | 'focus-lost'
+  | 'copy'
+  | 'paste'
+  | 'cut'
+  | 'devtools-shortcut'
+  | 'devtools-suspected'
+  | 'context-menu'
+
+export type IntegrityAlert = {
+  id: string
+  uid: string
+  name: string
+  type: IntegrityAlertType
+  detail: string | null
+  at: string
 }
 
 function isoOf(value: unknown): string {
@@ -74,6 +106,16 @@ const participantsRef = (orgId: string, testId: string) =>
   collection(db, 'organisations', orgId, 'tests', testId, 'participants')
 const participantDoc = (orgId: string, testId: string, uid: string) =>
   doc(db, 'organisations', orgId, 'tests', testId, 'participants', uid)
+/**
+ * The test's paper, snapshotted into a doc security rules can gate on the
+ * test's own phase — never the general org papers library, which any member
+ * can read any time. See firestore.rules: unreadable by students until the
+ * test leaves the lobby.
+ */
+const securePaperDoc = (orgId: string, testId: string) =>
+  doc(db, 'organisations', orgId, 'tests', testId, 'secure', 'paper')
+const alertsRef = (orgId: string, testId: string) =>
+  collection(db, 'organisations', orgId, 'tests', testId, 'alerts')
 
 function toTestSession(snapshot: QueryDocumentSnapshot<DocumentData>): TestSession {
   const data = snapshot.data()
@@ -89,6 +131,7 @@ function toTestSession(snapshot: QueryDocumentSnapshot<DocumentData>): TestSessi
     workingMinutes: Number(data.workingMinutes ?? 40),
     phase: ['lobby', 'reading', 'working', 'finished'].includes(data.phase) ? data.phase : 'lobby',
     phaseEndsAt: typeof data.phaseEndsAt === 'number' ? data.phaseEndsAt : null,
+    scheduledAt: typeof data.scheduledAt === 'number' ? data.scheduledAt : null,
     createdBy: String(data.createdBy ?? ''),
     createdAt: isoOf(data.createdAt),
   }
@@ -103,9 +146,41 @@ function toTestParticipant(snapshot: QueryDocumentSnapshot<DocumentData>): TestP
     wordCount: Number(data.wordCount ?? 0),
     preview: String(data.preview ?? ''),
     updatedAt: isoOf(data.updatedAt),
+    paused: data.paused === true,
+    pauseEndsAt: typeof data.pauseEndsAt === 'number' ? data.pauseEndsAt : null,
+    pausedBy: typeof data.pausedBy === 'string' ? data.pausedBy : null,
   }
 }
 
+function toIntegrityAlert(snapshot: QueryDocumentSnapshot<DocumentData>): IntegrityAlert {
+  const data = snapshot.data()
+  const knownTypes: IntegrityAlertType[] = [
+    'tab-hidden',
+    'focus-lost',
+    'copy',
+    'paste',
+    'cut',
+    'devtools-shortcut',
+    'devtools-suspected',
+    'context-menu',
+  ]
+  return {
+    id: snapshot.id,
+    uid: String(data.uid ?? ''),
+    name: String(data.name ?? ''),
+    type: knownTypes.includes(data.type) ? data.type : 'focus-lost',
+    detail: typeof data.detail === 'string' ? data.detail : null,
+    at: isoOf(data.at),
+  }
+}
+
+/**
+ * Creates the test, then — if it has a paper — snapshots that paper's
+ * questions into the test's own secure/paper document. The snapshot is the
+ * point: students can read the org's papers library at any time, but a test's
+ * questions have to stay unreadable until the teacher actually starts it,
+ * which only a rule keyed off this test's own phase can enforce.
+ */
 export async function createTestSession(
   orgId: string,
   createdBy: string,
@@ -117,7 +192,9 @@ export async function createTestSession(
     ruleProfile: RuleProfile
     readingMinutes: number
     workingMinutes: number
+    scheduledAt: number | null
   },
+  paper?: OrgPaper | null,
 ): Promise<TestSession> {
   const ref = doc(testsRef(orgId))
   await setDoc(ref, {
@@ -128,8 +205,51 @@ export async function createTestSession(
     createdBy,
     createdAt: serverTimestamp(),
   })
+  if (paper) {
+    await setDoc(doc(db, ref.path, 'secure', 'paper'), {
+      title: paper.title,
+      questions: paper.questions,
+      classQuestions: paper.classQuestions,
+    })
+  }
   const snapshot = await getDoc(ref)
   return toTestSession(snapshot as QueryDocumentSnapshot<DocumentData>)
+}
+
+export type SecureTestPaper = {
+  title: string
+  questions: ExtractedQuestion[]
+  classQuestions: Record<string, string[]>
+}
+
+/**
+ * The test's questions, readable only once the teacher has started the test
+ * (enforced in firestore.rules, not here). Returns null while the test is
+ * still in the lobby — a student's client genuinely never receives the text.
+ */
+export async function getSecureTestPaper(orgId: string, testId: string): Promise<SecureTestPaper | null> {
+  const snapshot = await getDoc(securePaperDoc(orgId, testId))
+  if (!snapshot.exists()) return null
+  const data = snapshot.data()
+  return {
+    title: String(data.title ?? 'Test paper'),
+    questions: Array.isArray(data.questions)
+      ? data.questions.map((q: { id?: unknown; index?: unknown; text?: unknown }) => ({
+          id: String(q.id ?? ''),
+          index: Number(q.index ?? 0),
+          text: String(q.text ?? ''),
+        }))
+      : [],
+    classQuestions:
+      data.classQuestions && typeof data.classQuestions === 'object'
+        ? Object.fromEntries(
+            Object.entries(data.classQuestions as Record<string, unknown>).map(([classId, ids]) => [
+              classId,
+              Array.isArray(ids) ? ids.map(String) : [],
+            ]),
+          )
+        : {},
+  }
 }
 
 /** Every test ever run for a class, most recent first — the teacher's own list. */
@@ -176,6 +296,22 @@ export function subscribeTestSession(
 ): Unsubscribe {
   return onSnapshot(testDoc(orgId, testId), (snapshot) =>
     cb(snapshot.exists() ? toTestSession(snapshot as QueryDocumentSnapshot<DocumentData>) : null),
+  )
+}
+
+/**
+ * One student watching their own row. Deliberately not the roster query
+ * above — a student may read only their own participant document, so the
+ * roster's collection query would simply be refused for them.
+ */
+export function subscribeMyParticipant(
+  orgId: string,
+  testId: string,
+  uid: string,
+  cb: (participant: TestParticipant | null) => void,
+): Unsubscribe {
+  return onSnapshot(participantDoc(orgId, testId, uid), (snapshot) =>
+    cb(snapshot.exists() ? toTestParticipant(snapshot as QueryDocumentSnapshot<DocumentData>) : null),
   )
 }
 
@@ -235,4 +371,57 @@ export async function updateTestProgress(
 
 export async function finishTestParticipant(orgId: string, testId: string, uid: string): Promise<void> {
   await updateDoc(participantDoc(orgId, testId, uid), { status: 'finished', updatedAt: serverTimestamp() })
+}
+
+/**
+ * A teacher pausing one student — a rest break, a question, a disruption at
+ * their desk. Only staff can write this (see firestore.rules): a student
+ * cannot pause their own live test, which is the whole point of it living on
+ * the participant document rather than in their own browser.
+ */
+export async function pauseParticipant(
+  orgId: string,
+  testId: string,
+  uid: string,
+  by: string,
+  minutes: number | null,
+): Promise<void> {
+  await updateDoc(participantDoc(orgId, testId, uid), {
+    paused: true,
+    pauseEndsAt: minutes === null ? null : Date.now() + minutes * 60_000,
+    pausedBy: by,
+  })
+}
+
+export async function resumeParticipant(orgId: string, testId: string, uid: string): Promise<void> {
+  await updateDoc(participantDoc(orgId, testId, uid), { paused: false, pauseEndsAt: null, pausedBy: null })
+}
+
+/**
+ * One integrity event from a student's own browser — a lost focus, a copy, a
+ * devtools shortcut. Append-only by design: a student may add to their own
+ * trail but can never read it back or clear it (see firestore.rules).
+ */
+export async function logIntegrityAlert(
+  orgId: string,
+  testId: string,
+  alert: { uid: string; name: string; type: IntegrityAlertType; detail?: string },
+): Promise<void> {
+  await setDoc(doc(alertsRef(orgId, testId)), {
+    uid: alert.uid,
+    name: alert.name,
+    type: alert.type,
+    detail: alert.detail ?? null,
+    at: serverTimestamp(),
+  })
+}
+
+/** The teacher's live alert feed — newest first, most recent 50. */
+export function subscribeIntegrityAlerts(
+  orgId: string,
+  testId: string,
+  cb: (alerts: IntegrityAlert[]) => void,
+): Unsubscribe {
+  const q = query(alertsRef(orgId, testId), orderBy('at', 'desc'), limit(50))
+  return onSnapshot(q, (snapshot) => cb(snapshot.docs.map(toIntegrityAlert)))
 }

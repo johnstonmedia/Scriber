@@ -2,6 +2,7 @@ import { type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useReveal, useScrollProgress, useScrollY } from '../lib/useReveal'
 import { HomeDemo } from '../components/HomeDemo'
+import { HeroScene } from '../components/HeroScene'
 
 function Reveal({ children, className = '', delay = 0 }: { children: ReactNode; className?: string; delay?: number }) {
   const { ref, visible } = useReveal<HTMLDivElement>()
@@ -92,6 +93,7 @@ export function Home() {
               See how it works
             </a>
           </div>
+          <HeroScene />
         </div>
         <div className="home-scroll-cue" aria-hidden="true">
           <span />

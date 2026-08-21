@@ -45,7 +45,20 @@ export type Organisation = {
     defaultRuleProfile: 'strict' | 'assisted'
     allowJoinRequests: boolean
   }
+  /**
+   * Shown to students on this org's own page and in a live test. No Storage
+   * bucket exists, so a logo (if any) is a small image compressed to a data
+   * URL and stored directly on this document — see MAX_LOGO_BYTES below.
+   */
+  branding: {
+    accentColor: string
+    tagline: string
+    logoDataUrl: string | null
+  }
 }
+
+/** A logo is embedded directly in the org document, so it has to stay tiny. */
+export const MAX_LOGO_BYTES = 40_000
 
 export type Membership = {
   orgId: string
@@ -148,6 +161,11 @@ function toOrganisation(snapshot: QueryDocumentSnapshot<DocumentData>): Organisa
     settings: {
       defaultRuleProfile: data.settings?.defaultRuleProfile === 'assisted' ? 'assisted' : 'strict',
       allowJoinRequests: data.settings?.allowJoinRequests !== false,
+    },
+    branding: {
+      accentColor: typeof data.branding?.accentColor === 'string' ? data.branding.accentColor : '#4f7cff',
+      tagline: typeof data.branding?.tagline === 'string' ? data.branding.tagline : '',
+      logoDataUrl: typeof data.branding?.logoDataUrl === 'string' ? data.branding.logoDataUrl : null,
     },
   }
 }
@@ -272,6 +290,7 @@ export async function createOrganisation(
     createdBy: uid,
     createdAt: serverTimestamp(),
     settings: { defaultRuleProfile: 'strict', allowJoinRequests: true },
+    branding: { accentColor: '#4f7cff', tagline: '', logoDataUrl: null },
   })
   try {
     await setDoc(doc(membersRef(org.id), uid), {
@@ -309,7 +328,11 @@ export async function getOrganisation(orgId: string): Promise<Organisation | nul
 /** An admin renaming the org or changing its settings — the org doc itself, nothing else. */
 export async function updateOrganisation(
   orgId: string,
-  updates: { name?: string; settings?: Partial<Organisation['settings']> },
+  updates: {
+    name?: string
+    settings?: Partial<Organisation['settings']>
+    branding?: Partial<Organisation['branding']>
+  },
 ): Promise<void> {
   const patch: Record<string, unknown> = {}
   if (updates.name !== undefined) patch.name = updates.name.trim()
@@ -318,8 +341,36 @@ export async function updateOrganisation(
       patch[`settings.${key}`] = value
     }
   }
+  if (updates.branding) {
+    for (const [key, value] of Object.entries(updates.branding)) {
+      patch[`branding.${key}`] = value
+    }
+  }
   if (Object.keys(patch).length === 0) return
   await updateDoc(orgDoc(orgId), patch)
+}
+
+/**
+ * Compresses an image file client-side into a small data URL suitable for
+ * embedding directly in the org document — there is no Storage bucket to
+ * upload it to. Downscales to at most 160px on the long edge and re-encodes
+ * as JPEG, which is normally enough to land well under MAX_LOGO_BYTES for a
+ * simple logo; throws if it still doesn't fit.
+ */
+export async function compressLogo(file: File): Promise<string> {
+  const bitmap = await createImageBitmap(file)
+  const scale = Math.min(1, 160 / Math.max(bitmap.width, bitmap.height))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Could not process that image.')
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.8)
+  if (dataUrl.length > MAX_LOGO_BYTES) {
+    throw new Error('That logo is too detailed to embed — try a simpler, smaller image.')
+  }
+  return dataUrl
 }
 
 /**

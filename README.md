@@ -173,6 +173,60 @@ two to finish building in the Firebase console before relying on it.
 Once deployed, add each domain you serve from under **Authentication →
 Settings → Authorised domains**, or Google sign-in will refuse to run there.
 
+### Sitting a live test
+
+A test is set up by a teacher against one class: a paper, reading and working
+time, the rule profile, and a date and time. Students see it on their
+dashboard as an upcoming assessment; the waiting room opens five minutes
+before the scheduled time and not a moment earlier.
+
+A live test is not practice with a shared clock. In one:
+
+- **The questions do not exist on the student's device until the test
+  starts.** A test snapshots its paper into `tests/{testId}/secure/paper`,
+  which `firestore.rules` refuses to serve a student until the test's own
+  `phase` leaves the lobby. This is the part that matters: it isn't the UI
+  hiding text that was already fetched — the text is never sent, so there is
+  nothing in memory, in a network response, or in a React tree to go looking
+  for. (Once the test *is* running the questions are on screen, and therefore
+  in the page. No browser app can do better than that.)
+- **Reading time is enforced.** The writer takes nothing down until the
+  teacher moves the class into working time.
+- **There is no typing.** The keyboard fallback that practice mode offers is
+  absent — a test is dictation or nothing.
+- **Nobody hands up early.** Finish stays locked until working time is over,
+  or the teacher ends the test for everyone.
+- **Only a teacher can pause a student**, for a set number of minutes or
+  until they resume them by hand. A pause covers the paper, stops the writer,
+  and pushes the deadline out so no working time is lost. A student cannot
+  write their own pause fields at all; the rules see to that, not the UI.
+
+The teacher's monitor shows who has logged on, live word counts, a preview of
+each answer (click a name to enlarge it), and a running integrity feed.
+
+**What the integrity feed can and cannot see.** It reports what a browser is
+allowed to say about its own tab: losing focus or being hidden, copy, cut and
+paste, the context menu, and the key combinations that open dev tools. It
+also notices the viewport gap that docked dev tools create. It cannot see the
+student's other tabs, their other applications, or the rest of their screen —
+no website can; that is walled off from web content by the browser itself.
+Anything claiming otherwise is a native lockdown application, not a web app.
+Supervise the room as well as the screen.
+
+### When something goes wrong
+
+Users are shown an error *code* and an offer to send a report — never an
+instruction, because most people cannot deploy a security rule or build a
+database index, and asking them to makes our fault look like theirs. The
+codes and what each one actually means live in `src/lib/errors.ts`; a sent
+report lands in `supportReports`, readable only by a site admin.
+
+### Locking the site
+
+**Site admin → Site lock** puts the whole platform behind a coming-soon page.
+A signed-in site admin still reaches every page normally, so you can keep
+working on a site that's shut to the world.
+
 ### Creating the first site admin
 
 Site admin is a platform-wide role — organisations, members, classes and

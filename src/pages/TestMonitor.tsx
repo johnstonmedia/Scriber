@@ -1,14 +1,21 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
-import { getClass, type OrgClass } from '../lib/org'
+import { getClass, getOrganisation, type Organisation, type OrgClass } from '../lib/org'
 import { RULE_PROFILES } from '../lib/ruleProfile'
+import { appError, type AppError } from '../lib/errors'
+import { ErrorNotice } from '../components/ErrorNotice'
 import {
   finishTestSession,
+  pauseParticipant,
+  resumeParticipant,
   startReading,
   startWorking,
+  subscribeIntegrityAlerts,
   subscribeTestParticipants,
   subscribeTestSession,
+  type IntegrityAlert,
+  type IntegrityAlertType,
   type TestParticipant,
   type TestPhase,
   type TestSession,
@@ -21,33 +28,61 @@ const PHASE_LABEL: Record<TestPhase, string> = {
   finished: 'Finished',
 }
 
+const ALERT_LABEL: Record<IntegrityAlertType, string> = {
+  'tab-hidden': 'Left the test tab',
+  'focus-lost': 'Clicked away from the test',
+  copy: 'Tried to copy',
+  paste: 'Tried to paste',
+  cut: 'Tried to cut',
+  'devtools-shortcut': 'Pressed a developer-tools shortcut',
+  'devtools-suspected': 'Developer tools may be open',
+  'context-menu': 'Opened the right-click menu',
+}
+
+/** Anything above this is worth the teacher's eye, not just the log. */
+const SERIOUS: IntegrityAlertType[] = ['tab-hidden', 'devtools-shortcut', 'devtools-suspected', 'paste']
+
 /**
  * The teacher's own view of a live test — a NAPLAN-style proctoring screen:
- * who's arrived, whether they're reading, working or done, and (once
- * working starts) a live word count and a trailing preview of what each
- * student has written so far. Nobody moves themselves from reading into
- * working — that transition, like starting the test at all, only happens
- * from here.
+ * who's arrived, whether they're reading, working or done, a live word count
+ * and a trailing preview of each answer, and a running integrity feed.
+ *
+ * It is worth being plain about the limits of that feed, because they are
+ * the browser's and not ours: a web page can see its own tab losing focus,
+ * and copy/paste and dev-tools shortcuts aimed at itself. It cannot see the
+ * student's other tabs, their other applications, or the rest of their
+ * screen — no website can. Screen sharing is the only thing that shows those,
+ * and it needs a relay server this build doesn't have yet.
  */
 export function TestMonitor() {
   const { orgId, testId } = useParams<{ orgId: string; testId: string }>()
-  const { memberships, siteAdmin } = useAuth()
+  const { memberships, siteAdmin, user } = useAuth()
   const membership = memberships.find((m) => m.orgId === orgId)
   const isStaff = membership?.role === 'teacher' || membership?.role === 'admin' || siteAdmin
   const [test, setTest] = useState<TestSession | null>(null)
+  const [org, setOrg] = useState<Organisation | null>(null)
   const [orgClass, setOrgClass] = useState<OrgClass | null>(null)
   const [participants, setParticipants] = useState<TestParticipant[]>([])
-  const [error, setError] = useState<string | null>(null)
+  const [alerts, setAlerts] = useState<IntegrityAlert[]>([])
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [error, setError] = useState<AppError | null>(null)
 
   useEffect(() => {
     if (!orgId || !testId) return
     const unsubTest = subscribeTestSession(orgId, testId, setTest)
     const unsubParticipants = subscribeTestParticipants(orgId, testId, setParticipants)
+    const unsubAlerts = subscribeIntegrityAlerts(orgId, testId, setAlerts)
     return () => {
       unsubTest()
       unsubParticipants()
+      unsubAlerts()
     }
   }, [orgId, testId])
+
+  useEffect(() => {
+    if (!orgId) return
+    void getOrganisation(orgId).then(setOrg).catch(() => undefined)
+  }, [orgId])
 
   useEffect(() => {
     if (!orgId || !test?.classId) return
@@ -66,6 +101,23 @@ export function TestMonitor() {
     return () => window.clearTimeout(id)
   }, [orgId, testId, test])
 
+  // A timed pause lifts itself. The student cannot write their own pause
+  // fields (the rules see to that), so the resume has to come from here.
+  useEffect(() => {
+    if (!orgId || !testId) return
+    const due = participants.filter((p) => p.paused && p.pauseEndsAt !== null)
+    if (due.length === 0) return
+    const id = window.setInterval(() => {
+      const now = Date.now()
+      for (const p of due) {
+        if (p.pauseEndsAt !== null && now >= p.pauseEndsAt) {
+          void resumeParticipant(orgId, testId, p.uid).catch(() => undefined)
+        }
+      }
+    }, 2000)
+    return () => window.clearInterval(id)
+  }, [orgId, testId, participants])
+
   if (!orgId || !testId) return null
   if (!isStaff) {
     return (
@@ -77,7 +129,7 @@ export function TestMonitor() {
   if (!test) {
     return (
       <div className="page">
-        {error ? <div className="alert alert-error">{error}</div> : <p className="muted">Loading…</p>}
+        {error ? <ErrorNotice error={error} /> : <p className="muted">Loading…</p>}
       </div>
     )
   }
@@ -85,14 +137,40 @@ export function TestMonitor() {
   const activeCount = participants.filter((p) => p.status === 'active').length
   const finishedCount = participants.filter((p) => p.status === 'finished').length
   const totalStudents = orgClass?.studentIds.length ?? null
+  const alertsByUid = alerts.reduce<Record<string, number>>((acc, a) => {
+    acc[a.uid] = (acc[a.uid] ?? 0) + 1
+    return acc
+  }, {})
+
+  function handlePause(p: TestParticipant) {
+    if (!orgId || !testId || !user) return
+    if (p.paused) {
+      void resumeParticipant(orgId, testId, p.uid).catch((err) => setError(appError('SCR-400', err)))
+      return
+    }
+    const answer = prompt('Pause for how many minutes? Leave blank to pause until you resume them.', '5')
+    if (answer === null) return
+    const minutes = answer.trim() === '' ? null : Number(answer)
+    if (minutes !== null && (!Number.isFinite(minutes) || minutes <= 0)) return
+    void pauseParticipant(orgId, testId, p.uid, user.uid, minutes).catch((err) =>
+      setError(appError('SCR-400', err)),
+    )
+  }
 
   return (
     <div className="page page-wide">
-      <div className="page-head">
+      <div
+        className="page-head"
+        style={org?.branding.accentColor ? { borderBottom: `3px solid ${org.branding.accentColor}` } : undefined}
+      >
+        {org?.branding.logoDataUrl && (
+          <img src={org.branding.logoDataUrl} alt="" style={{ height: 40, marginRight: 12 }} />
+        )}
         <div className="grow">
           <h1>{test.title}</h1>
           <p className="muted">
             {test.className} · {PHASE_LABEL[test.phase]} · {RULE_PROFILES[test.ruleProfile].short}
+            {test.scheduledAt ? ` · ${new Date(test.scheduledAt).toLocaleString('en-AU')}` : ''}
           </p>
         </div>
         <Link className="btn" to={`/organisations/${orgId}`}>
@@ -100,7 +178,7 @@ export function TestMonitor() {
         </Link>
       </div>
 
-      {error && <div className="alert alert-error" style={{ marginBottom: 16 }}>{error}</div>}
+      <ErrorNotice error={error} onDismiss={() => setError(null)} />
 
       <div className="stat-grid" style={{ marginBottom: 22 }}>
         <div className="stat">
@@ -108,7 +186,7 @@ export function TestMonitor() {
             {participants.length}
             {totalStudents !== null ? ` / ${totalStudents}` : ''}
           </div>
-          <div className="label">Joined</div>
+          <div className="label">Logged on</div>
         </div>
         <div className="stat">
           <div className="value">{activeCount}</div>
@@ -118,6 +196,10 @@ export function TestMonitor() {
           <div className="value">{finishedCount}</div>
           <div className="label">Finished</div>
         </div>
+        <div className="stat">
+          <div className="value">{alerts.length}</div>
+          <div className="label">Alerts</div>
+        </div>
       </div>
 
       <div className="row gap-2 wrap" style={{ marginBottom: 22 }}>
@@ -126,11 +208,23 @@ export function TestMonitor() {
             className="btn btn-primary btn-lg"
             onClick={() =>
               void startReading(orgId, testId, test.readingMinutes).catch((err) =>
-                setError(err instanceof Error ? err.message : 'Could not start the test.'),
+                setError(appError('SCR-400', err)),
               )
             }
           >
-            Start test
+            Begin test
+          </button>
+        )}
+        {test.phase === 'reading' && (
+          <button
+            className="btn btn-primary"
+            onClick={() =>
+              void startWorking(orgId, testId, test.workingMinutes).catch((err) =>
+                setError(appError('SCR-400', err)),
+              )
+            }
+          >
+            End reading time now
           </button>
         )}
         {test.phase !== 'finished' && (
@@ -138,9 +232,7 @@ export function TestMonitor() {
             className="btn btn-danger"
             onClick={() => {
               if (confirm('End this test for the whole class? Nobody will be able to keep working.')) {
-                void finishTestSession(orgId, testId).catch((err) =>
-                  setError(err instanceof Error ? err.message : 'Could not end the test.'),
-                )
+                void finishTestSession(orgId, testId).catch((err) => setError(appError('SCR-400', err)))
               }
             }}
           >
@@ -149,33 +241,90 @@ export function TestMonitor() {
         )}
       </div>
 
-      <div className="card">
-        {participants.length === 0 ? (
-          <div className="empty" style={{ border: 'none' }}>Nobody has joined the waiting room yet.</div>
-        ) : (
-          participants.map((p, i) => (
-            <div
-              key={p.uid}
-              className="row gap-3 wrap"
-              style={{ padding: '14px 18px', borderTop: i === 0 ? 'none' : '1px solid var(--line)' }}
-            >
-              <div className="grow">
-                <strong>{p.name}</strong>
-                {test.phase === 'working' && (
-                  <div className="small muted">{p.preview ? `…${p.preview}` : 'Nothing written yet.'}</div>
+      <div className="monitor-grid">
+        <div className="card">
+          {participants.length === 0 ? (
+            <div className="empty" style={{ border: 'none' }}>Nobody has logged on yet.</div>
+          ) : (
+            participants.map((p, i) => (
+              <div
+                key={p.uid}
+                className="stack gap-2"
+                style={{ padding: '14px 18px', borderTop: i === 0 ? 'none' : '1px solid var(--line)' }}
+              >
+                <div className="row gap-3 wrap">
+                  <button
+                    className="btn btn-ghost btn-sm grow"
+                    style={{ justifyContent: 'flex-start', textAlign: 'left' }}
+                    onClick={() => setExpanded(expanded === p.uid ? null : p.uid)}
+                  >
+                    <strong>{p.name}</strong>
+                  </button>
+                  {alertsByUid[p.uid] && <span className="badge badge-warn">{alertsByUid[p.uid]} alerts</span>}
+                  <span className="badge">{p.wordCount} words</span>
+                  <span
+                    className={`badge ${
+                      p.paused
+                        ? 'badge-warn'
+                        : p.status === 'finished'
+                          ? 'badge-good'
+                          : p.status === 'active'
+                            ? 'badge-live'
+                            : ''
+                    }`}
+                  >
+                    {p.paused
+                      ? 'Paused'
+                      : p.status === 'ready'
+                        ? 'Ready'
+                        : p.status === 'active'
+                          ? 'Working'
+                          : 'Finished'}
+                  </span>
+                  {test.phase !== 'finished' && p.status !== 'finished' && (
+                    <button className="btn btn-sm" onClick={() => handlePause(p)}>
+                      {p.paused ? 'Resume' : 'Pause'}
+                    </button>
+                  )}
+                </div>
+                {expanded === p.uid ? (
+                  <div className="card card-pad" style={{ whiteSpace: 'pre-wrap', maxHeight: 320, overflowY: 'auto' }}>
+                    {p.preview ? `…${p.preview}` : 'Nothing written yet.'}
+                  </div>
+                ) : (
+                  test.phase === 'working' && (
+                    <div className="small muted">{p.preview ? `…${p.preview}` : 'Nothing written yet.'}</div>
+                  )
                 )}
               </div>
-              <span className="badge">{p.wordCount} words</span>
-              <span
-                className={`badge ${
-                  p.status === 'finished' ? 'badge-good' : p.status === 'active' ? 'badge-live' : ''
-                }`}
-              >
-                {p.status === 'ready' ? 'Ready' : p.status === 'active' ? 'Working' : 'Finished'}
-              </span>
+            ))
+          )}
+        </div>
+
+        <div className="card card-pad stack gap-3">
+          <div>
+            <h2 style={{ margin: 0 }}>Alerts</h2>
+            <p className="tiny muted" style={{ marginTop: 4 }}>
+              What a browser can report about its own tab. It cannot see other tabs or applications —
+              watch the room for that.
+            </p>
+          </div>
+          {alerts.length === 0 ? (
+            <p className="small muted">Nothing flagged.</p>
+          ) : (
+            <div className="stack gap-2" style={{ maxHeight: 460, overflowY: 'auto' }}>
+              {alerts.map((a) => (
+                <div key={a.id} className="row gap-2 wrap">
+                  <span className={`badge ${SERIOUS.includes(a.type) ? 'badge-warn' : ''}`}>
+                    {ALERT_LABEL[a.type]}
+                  </span>
+                  <span className="small grow">{a.name}</span>
+                  <span className="tiny muted">{new Date(a.at).toLocaleTimeString('en-AU')}</span>
+                </div>
+              ))}
             </div>
-          ))
-        )}
+          )}
+        </div>
       </div>
     </div>
   )

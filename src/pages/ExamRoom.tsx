@@ -2,15 +2,23 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { createAttempt, getPaper, saveAttempt, type Paper } from '../lib/data'
-import { getOrgPaper, type OrgPaper } from '../lib/org'
+import { getOrganisation, getOrgPaper, type Organisation, type OrgPaper } from '../lib/org'
 import { RULE_PROFILES } from '../lib/ruleProfile'
 import {
   finishTestParticipant,
+  getSecureTestPaper,
   joinTestSession,
+  subscribeMyParticipant,
   subscribeTestSession,
   updateTestProgress,
+  JOIN_WINDOW_MS,
+  type SecureTestPaper,
+  type TestParticipant,
   type TestSession,
 } from '../lib/testSession'
+import { useExamIntegrity } from '../lib/examIntegrity'
+import { appError, type AppError } from '../lib/errors'
+import { ErrorNotice } from '../components/ErrorNotice'
 import { CommandDrawer } from '../components/CommandReference'
 import { PaperViewer } from '../components/PaperViewer'
 import { OrgPaperViewer } from '../components/OrgPaperViewer'
@@ -110,10 +118,23 @@ export function ExamRoom() {
   const [orgPaper, setOrgPaper] = useState<OrgPaper | null>(null)
   const [attemptId, setAttemptId] = useState<string | null>(null)
   const [test, setTest] = useState<TestSession | null>(null)
+  /**
+   * A live test's questions, and only once the teacher has started it. Kept
+   * separate from orgPaper on purpose: the org's papers library is readable
+   * by any member at any time, so a test that served its questions from there
+   * would be readable in the waiting room. This comes from the test's own
+   * secure document, which the rules refuse to serve a student until the
+   * test's phase leaves the lobby.
+   */
+  const [securePaper, setSecurePaper] = useState<SecureTestPaper | null>(null)
+  const [me, setMe] = useState<TestParticipant | null>(null)
+  const [org, setOrg] = useState<Organisation | null>(null)
   const testAttemptStarted = useRef(false)
 
   /** Whichever source this practice paper came from — personal or distributed. */
   const paperMeta = paper ?? orgPaper
+  /** In a live test the paper only exists once the teacher has started it. */
+  const hasPaper = testId ? !!securePaper : !!paperMeta
 
   /**
    * If any class this student belongs to in this org has been assigned a
@@ -122,20 +143,21 @@ export function ExamRoom() {
    * classes means null, and the viewer falls back to the whole paper.
    */
   const assignedQuestionIds = useMemo(() => {
-    if (!orgPaper || !orgId) return null
+    const source = testId ? securePaper : orgPaper
+    if (!source || !orgId) return null
     const membership = memberships.find((m) => m.orgId === orgId)
     if (!membership) return null
     const ids = new Set<string>()
     let hasAssignment = false
     for (const classId of membership.classIds) {
-      const forClass = orgPaper.classQuestions[classId]
+      const forClass = source.classQuestions[classId]
       if (forClass && forClass.length > 0) {
         hasAssignment = true
         forClass.forEach((id) => ids.add(id))
       }
     }
     return hasAssignment ? [...ids] : null
-  }, [orgPaper, orgId, memberships])
+  }, [testId, securePaper, orgPaper, orgId, memberships])
 
   const [scribe, setScribe] = useState<ScribeState>(createState)
   const [interim, setInterim] = useState('')
@@ -150,6 +172,7 @@ export function ExamRoom() {
   phaseRef.current = phase
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([])
   const [notice, setNotice] = useState<string | null>(null)
+  const [error, setError] = useState<AppError | null>(null)
   const [showCommands, setShowCommands] = useState(false)
   const [typed, setTyped] = useState('')
   const [showPaper, setShowPaper] = useState(true)
@@ -186,6 +209,32 @@ export function ExamRoom() {
   // read-back rate, font size) stays theirs.
   const effectiveRuleProfile = test ? test.ruleProfile : settings.ruleProfile
 
+  /**
+   * A live test is not practice with a shared clock — it is an exam. The
+   * student does not choose when reading time ends, does not type instead of
+   * dictating, does not pause themselves, and does not hand up early. Each of
+   * these is enforced at the point the action happens, not by hiding a
+   * button: a disabled control is a suggestion, and a form still submits on
+   * Enter.
+   */
+  const isLiveTest = !!testId
+  const paused = isLiveTest && me?.paused === true
+  const readingLocked = isLiveTest && phase === 'reading'
+  const pausedRef = useRef(paused)
+  pausedRef.current = paused
+  const [timeUp, setTimeUp] = useState(false)
+  /**
+   * A scheduled test opens its doors five minutes before it's due, and a test
+   * already under way is always open (a student who dropped out has to be
+   * able to get back in). An unscheduled test has no door to open.
+   */
+  const [now, setNow] = useState(() => Date.now())
+  const withinJoinWindow =
+    !test ||
+    test.scheduledAt === null ||
+    test.phase !== 'lobby' ||
+    now >= test.scheduledAt - JOIN_WINDOW_MS
+
   const readingMs = testId
     ? (test?.readingMinutes ?? 10) * 60_000
     : (paperMeta?.readingMinutes ?? 5) * 60_000
@@ -219,21 +268,43 @@ export function ExamRoom() {
     return subscribeTestSession(orgId, testId, setTest)
   }, [orgId, testId])
 
+  // A test sat under the school's own name and colours, not Scriber's.
+  useEffect(() => {
+    if (!orgId || !testId) return
+    void getOrganisation(orgId).then(setOrg).catch(() => undefined)
+  }, [orgId, testId])
+
   // Arriving in the waiting room marks this student ready — the teacher's
-  // monitor counts this the moment it lands.
+  // monitor counts this the moment it lands. A scheduled test won't let
+  // anyone in until it's nearly due, so a class can't drift into the waiting
+  // room an hour early.
+  useEffect(() => {
+    if (!orgId || !testId || !user || !test) return
+    if (!withinJoinWindow) return
+    void joinTestSession(orgId, testId, { uid: user.uid, name: user.name })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, testId, user, test, withinJoinWindow])
+
+  // A test's questions arrive only once the teacher has started it. Waiting
+  // for the phase isn't a UI nicety — the security rules refuse to serve this
+  // document in the lobby, so before the test begins the text genuinely never
+  // reaches this browser, and there is nothing in memory or in a network
+  // response for anyone to go looking for.
+  useEffect(() => {
+    if (!orgId || !testId || !test?.paperId) return
+    if (test.phase !== 'reading' && test.phase !== 'working') return
+    if (securePaper) return
+    getSecureTestPaper(orgId, testId)
+      .then(setSecurePaper)
+      .catch(() => setError(appError('SCR-401')))
+  }, [orgId, testId, test?.paperId, test?.phase, securePaper])
+
+  // This student's own participant row — the teacher writes the pause fields
+  // on it, and this is how a pause reaches them.
   useEffect(() => {
     if (!orgId || !testId || !user) return
-    void joinTestSession(orgId, testId, { uid: user.uid, name: user.name })
+    return subscribeMyParticipant(orgId, testId, user.uid, setMe)
   }, [orgId, testId, user])
-
-  // A test's paper (if it has one) comes from the test doc, not a `paper=`
-  // URL param — there isn't one in test mode.
-  useEffect(() => {
-    if (!orgId || !test?.paperId) return
-    getOrgPaper(orgId, test.paperId)
-      .then(setOrgPaper)
-      .catch(() => setNotice('Could not load the test paper.'))
-  }, [orgId, test?.paperId])
 
   // Mirrors the synced test phase onto this student's own view. The teacher
   // controls reading → working; a student can never skip ahead of it, and a
@@ -247,7 +318,7 @@ export function ExamRoom() {
     }
     if (test.phase === 'finished') {
       if (phaseRef.current !== 'finished' && phaseRef.current !== 'setup' && phaseRef.current !== 'lobby') {
-        void finish()
+        void finish(true)
       } else {
         setPhase('finished')
       }
@@ -310,6 +381,24 @@ export function ExamRoom() {
     }, msLeft)
     return () => window.clearTimeout(id)
   }, [phase, workingMs, testId])
+
+  // Ticks only while a scheduled test is still waiting for its door to open.
+  useEffect(() => {
+    if (withinJoinWindow) return
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [withinJoinWindow])
+
+  // Whether working time has actually run out — the only thing that unlocks
+  // Finish in a live test. Kept as state (rather than read off the deadline
+  // ref) because the button has to re-render the moment it becomes true.
+  useEffect(() => {
+    if (!isLiveTest || phase !== 'working') return
+    const check = () => setTimeUp(phaseEndsAt.current !== null && Date.now() >= phaseEndsAt.current)
+    check()
+    const id = window.setInterval(check, 1000)
+    return () => window.clearInterval(id)
+  }, [isLiveTest, phase, paused])
 
   // ------------------------------------------------------------- the writer
 
@@ -404,8 +493,10 @@ export function ExamRoom() {
 
       // In a live test, reading time is enforced, not just suggested — the
       // writer simply won't take anything down until the teacher moves the
-      // class into working time.
+      // class into working time. Same for a teacher-imposed pause: the writer
+      // has put their pen down and nothing said in the meantime is written.
       if (testId && phaseRef.current === 'reading') return
+      if (pausedRef.current) return
 
       // The writer has stopped and asked a question — whatever you say next is
       // the answer to it, not more of your essay.
@@ -447,6 +538,15 @@ export function ExamRoom() {
       delete w.__scriberAgeSession
     }
   }, [])
+
+  useExamIntegrity({
+    active: isLiveTest && (phase === 'reading' || phase === 'working'),
+    orgId,
+    testId,
+    uid: user?.uid ?? null,
+    name: user?.name ?? '',
+    onLocalWarning: setNotice,
+  })
 
   // The pen moves on its own clock, a beat behind the student.
   useEffect(() => {
@@ -589,6 +689,9 @@ export function ExamRoom() {
 
   function toggleMic() {
     if (!dictation.current) return
+    // Checked here, not just on the button: a disabled button is a hint, and
+    // this is the function anything else would have to go through.
+    if (readingLocked || paused) return
     if (listening) {
       dictation.current.stop()
     } else {
@@ -596,6 +699,24 @@ export function ExamRoom() {
       dictation.current.start()
     }
   }
+
+  // A teacher's pause stops the microphone wherever the student had got to,
+  // and the clock with it — the deadline is pushed out by however long the
+  // pause lasts, so nobody loses working time to a rest break.
+  const pausedAt = useRef<number | null>(null)
+  useEffect(() => {
+    if (!isLiveTest) return
+    if (paused) {
+      dictation.current?.stop()
+      readAloud.stop()
+      if (pausedAt.current === null) pausedAt.current = Date.now()
+      return
+    }
+    if (pausedAt.current !== null) {
+      if (phaseEndsAt.current !== null) phaseEndsAt.current += Date.now() - pausedAt.current
+      pausedAt.current = null
+    }
+  }, [paused, isLiveTest])
 
   function pause() {
     dictation.current?.stop()
@@ -609,7 +730,13 @@ export function ExamRoom() {
     setPhase('working')
   }
 
-  async function finish() {
+  /**
+   * `forced` is the teacher ending the test, or the clock running out — the
+   * only two ways a live test finishes. A student handing up early is not one
+   * of them, so an unforced call during a live test simply does nothing.
+   */
+  async function finish(forced = false) {
+    if (isLiveTest && !forced && !timeUp) return
     dictation.current?.stop()
     readAloud.stop()
 
@@ -723,28 +850,61 @@ export function ExamRoom() {
   }
 
   if (phase === 'lobby') {
+    const opensAt = test?.scheduledAt ? test.scheduledAt - JOIN_WINDOW_MS : null
     return (
       <div className="page" style={{ maxWidth: 720 }}>
         <div className="page-head">
           <div className="grow">
             <h1>{test?.title ?? 'Live test'}</h1>
-            <p className="muted">{test?.className ? `${test.className} · ` : ''}Waiting for teacher to begin exam</p>
+            <p className="muted">
+              {test?.className ? `${test.className} · ` : ''}
+              {withinJoinWindow ? 'Waiting for your supervisor to begin' : 'Not open yet'}
+            </p>
           </div>
           <button className="btn btn-ghost" onClick={() => navigate('/')}>
             Leave
           </button>
         </div>
 
-        <div className="card card-pad stack gap-4">
-          <div className="row gap-2 wrap">
-            <span className="badge badge-good">You're marked ready</span>
-            {test && <span className="badge badge-accent">{RULE_PROFILES[test.ruleProfile].full}</span>}
+        {error && <ErrorNotice error={error} onDismiss={() => setError(null)} />}
+
+        {!withinJoinWindow ? (
+          <div className="card card-pad stack gap-3">
+            <p className="muted">
+              This test starts at{' '}
+              <strong>{new Date(test!.scheduledAt!).toLocaleString('en-AU')}</strong>. The waiting room
+              opens five minutes beforehand{opensAt ? `, at ${new Date(opensAt).toLocaleTimeString('en-AU')}` : ''}.
+            </p>
+            <p className="small muted">Leave this page open — it will let you in on its own.</p>
           </div>
-          <p className="muted small">
-            The teacher will start the test for the whole class at once. This screen updates itself —
-            no need to refresh.
-          </p>
-        </div>
+        ) : (
+          <div className="card card-pad stack gap-4">
+            <div className="row gap-2 wrap">
+              <span className="badge badge-good">You're marked ready</span>
+              {test && <span className="badge badge-accent">{RULE_PROFILES[test.ruleProfile].full}</span>}
+            </div>
+            <div className="stack gap-2">
+              <strong className="small">While you wait, check these</strong>
+              <div className="row gap-2 wrap">
+                <span className={`badge ${supported ? 'badge-good' : 'badge-warn'}`}>
+                  {supported ? 'Microphone available' : 'No speech in this browser'}
+                </span>
+                <span className="badge">Close every other tab and app</span>
+                <span className="badge">Headphones in, if you use them</span>
+              </div>
+              {!supported && (
+                <p className="small" style={{ color: 'var(--live)' }}>
+                  This test is dictation only — typing is not available. Open it in Chrome, Edge or
+                  Safari before your supervisor begins.
+                </p>
+              )}
+            </div>
+            <p className="muted small">
+              Your supervisor starts the test for the whole class at once, and can see when you leave
+              this tab. This screen updates itself — don't refresh.
+            </p>
+          </div>
+        )}
       </div>
     )
   }
@@ -758,9 +918,36 @@ export function ExamRoom() {
         ? 'Your writer is falling behind'
         : 'Your writer is keeping up'
 
+  // A teacher-imposed pause covers the paper as well as stopping the writer —
+  // a rest break in which the questions stay on screen isn't a break.
+  if (paused) {
+    return (
+      <div className="exam-shell">
+        <div className="exam-paused">
+          <div className="card card-pad stack gap-3" style={{ maxWidth: 420, textAlign: 'center' }}>
+            <h1 style={{ margin: 0 }}>Paused</h1>
+            <p className="muted">
+              Your supervisor has paused your test. Your work is safe and your working time is not
+              running down. This screen will clear itself when they resume you.
+            </p>
+            {me?.pauseEndsAt && (
+              <p className="small muted">Resuming automatically at {new Date(me.pauseEndsAt).toLocaleTimeString('en-AU')}.</p>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="exam-shell">
-      <header className="exam-bar">
+      <header
+        className="exam-bar"
+        style={org && isLiveTest ? { borderBottom: `3px solid ${org.branding.accentColor}` } : undefined}
+      >
+        {org?.branding.logoDataUrl && isLiveTest && (
+          <img src={org.branding.logoDataUrl} alt="" style={{ height: 24 }} />
+        )}
         <button className="btn btn-sm btn-ghost" onClick={() => navigate('/')}>
           ← Leave
         </button>
@@ -773,7 +960,7 @@ export function ExamRoom() {
 
         <div className="spacer" />
 
-        {paperMeta && (
+        {hasPaper && (
           <button className="btn btn-sm" onClick={() => setShowPaper((v) => !v)}>
             {showPaper ? 'Hide paper' : 'Show paper'}
           </button>
@@ -791,7 +978,12 @@ export function ExamRoom() {
               Pause
             </button>
           ))}
-        <button className="btn btn-sm btn-primary" onClick={() => void finish()}>
+        <button
+          className="btn btn-sm btn-primary"
+          onClick={() => void finish()}
+          disabled={isLiveTest && !timeUp}
+          title={isLiveTest && !timeUp ? 'You can hand up once working time is over.' : undefined}
+        >
           Finish
         </button>
       </header>
@@ -827,6 +1019,12 @@ export function ExamRoom() {
         </div>
       )}
 
+      {error && (
+        <div className="no-print" style={{ padding: '0 16px' }}>
+          <ErrorNotice error={error} onDismiss={() => setError(null)} />
+        </div>
+      )}
+
       {notice && (
         <div className="alert alert-warn no-print" style={{ borderRadius: 0 }}>
           <div className="row gap-3">
@@ -838,11 +1036,13 @@ export function ExamRoom() {
         </div>
       )}
 
-      <div className="exam-body" data-panes={paperMeta && showPaper ? 'split' : 'answer-only'}>
-        {paperMeta && showPaper && (
+      <div className="exam-body" data-panes={hasPaper && showPaper ? 'split' : 'answer-only'}>
+        {hasPaper && showPaper && (
           <>
             <div className="pane pane-paper">
-              {orgPaper ? (
+              {securePaper ? (
+                <OrgPaperViewer paper={securePaper} assignedQuestionIds={assignedQuestionIds} />
+              ) : orgPaper ? (
                 <OrgPaperViewer paper={orgPaper} assignedQuestionIds={assignedQuestionIds} />
               ) : paper ? (
                 <PaperViewer paper={paper} uid={user?.uid ?? ''} />
@@ -913,7 +1113,7 @@ export function ExamRoom() {
               className="mic-button"
               data-live={listening}
               onClick={toggleMic}
-              disabled={!supported || phase === 'paused' || (!!testId && phase === 'reading')}
+              disabled={!supported || phase === 'paused' || readingLocked || paused}
             >
               <span className="mic-dot" />
               {listening ? 'Listening — press to stop' : 'Start dictating'}
@@ -924,29 +1124,38 @@ export function ExamRoom() {
               onClick={() =>
                 readAloud.speak(lastSentences(scribe.atoms, 2) || 'Nothing written yet.', settings.readBackRate)
               }
+              disabled={paused}
             >
               Read back
             </button>
 
-            <form
-              className="type-fallback"
-              onSubmit={(event) => {
-                event.preventDefault()
-                write(typed)
-                setTyped('')
-              }}
-            >
-              <input
-                className="input"
-                placeholder='Or type what you would say — "and so comma new paragraph"'
-                value={typed}
-                onChange={(e) => setTyped(e.target.value)}
-                aria-label="Type your dictation"
-              />
-              <button className="btn" type="submit" disabled={!typed.trim() || (!!testId && phase === 'reading')}>
-                Write
-              </button>
-            </form>
+            {/*
+              The typed fallback exists so a browser without speech recognition
+              can still be practised in. A live test is the one place it must
+              not: the point of the exercise is dictating to a writer, and
+              typing is exactly the assistance the student won't have.
+            */}
+            {!isLiveTest && (
+              <form
+                className="type-fallback"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  write(typed)
+                  setTyped('')
+                }}
+              >
+                <input
+                  className="input"
+                  placeholder='Or type what you would say — "and so comma new paragraph"'
+                  value={typed}
+                  onChange={(e) => setTyped(e.target.value)}
+                  aria-label="Type your dictation"
+                />
+                <button className="btn" type="submit" disabled={!typed.trim()}>
+                  Write
+                </button>
+              </form>
+            )}
           </div>
         </div>
       </div>

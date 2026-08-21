@@ -15,7 +15,18 @@ import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore'
 const DIR = '/tmp/claude-0/-home-user-Scriber/97982e6f-b430-573d-adfc-9832e4c933b6/scratchpad'
 const shot = (page, name) => page.screenshot({ path: `${DIR}/testmode-${name}.png`, fullPage: true })
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' })
+// getDisplayMedia normally opens a picker no script can click. These flags
+// make Chromium answer it with a synthetic screen instead, so the whole
+// share → WebRTC → supervisor path runs for real in this suite.
+const browser = await chromium.launch({
+  executablePath: '/opt/pw-browsers/chromium',
+  args: [
+    '--use-fake-ui-for-media-stream',
+    '--use-fake-device-for-media-stream',
+    '--auto-select-desktop-capture-source=Entire screen',
+    '--allow-running-insecure-content',
+  ],
+})
 const stamp = Date.now()
 const emails = {
   teacher: `tme2e-teacher${stamp}@school.test`,
@@ -186,6 +197,35 @@ await studentAPage.waitForSelector('text=Waiting for your supervisor to begin', 
 await studentBPage.goto(`http://localhost:5173/exam?org=${orgId}&test=${testId}`, { waitUntil: 'domcontentloaded' })
 await studentBPage.waitForSelector('text=Waiting for your supervisor to begin', { timeout: 15000 })
 console.log('both students in the waiting room')
+
+// ------------------------------------------- 4b. screen sharing is a condition
+
+for (const [page, who] of [[studentAPage, 'A'], [studentBPage, 'B']]) {
+  await page.getByRole('button', { name: 'Share my screen' }).click()
+  await page.waitForSelector('text=Screen shared', { timeout: 20000 })
+  console.log(`student ${who} shared their screen`)
+}
+
+// The supervisor's monitor should now actually receive both screens over
+// WebRTC — not merely believe they are shared.
+await teacherPage
+  .locator('.stat', { hasText: 'Sharing screen' })
+  .locator('.value')
+  .filter({ hasText: /^2$/ })
+  .waitFor({ timeout: 20000 })
+console.log('monitor counts both students as sharing')
+
+// A <video> element is always on the page; what matters is that one of them
+// is actually decoding frames from the far end.
+await teacherPage.waitForFunction(
+  () =>
+    [...document.querySelectorAll('.student-screen video')].some(
+      (v) => v.srcObject && v.videoWidth > 0,
+    ),
+  { timeout: 60000 },
+)
+console.log("a student's screen is playing live on the supervisor's monitor")
+await shot(teacherPage, '01b-screens')
 
 await teacherPage.waitForSelector('text=Student A', { timeout: 15000 })
 await teacherPage.waitForSelector('text=Student B', { timeout: 15000 })

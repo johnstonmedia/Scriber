@@ -208,10 +208,40 @@ each answer (click a name to enlarge it), and a running integrity feed.
 allowed to say about its own tab: losing focus or being hidden, copy, cut and
 paste, the context menu, and the key combinations that open dev tools. It
 also notices the viewport gap that docked dev tools create. It cannot see the
-student's other tabs, their other applications, or the rest of their screen —
-no website can; that is walled off from web content by the browser itself.
-Anything claiming otherwise is a native lockdown application, not a web app.
-Supervise the room as well as the screen.
+student's other tabs or their other applications by name — no website can;
+that is walled off from web content by the browser itself. Anything claiming
+otherwise is a native lockdown application, not a web app.
+
+### Screen sharing
+
+Sitting a live test means sharing your screen for its whole length. The
+student is asked in the waiting room and must pick their **entire screen** —
+a single tab is refused, since a supervisor who can see only the exam can't
+see anything worth seeing. Stopping the share mid-test raises an alert and a
+banner that won't go away until it's running again. This is how a supervisor
+sees the other applications the integrity feed can't name.
+
+The video is a direct browser-to-browser connection and is never recorded or
+stored. Firestore carries only the handshake that introduces the two sides,
+under the student's own participant document, readable by nobody else.
+
+Two browsers on the same school network can usually reach each other
+directly, and then no server is involved at all. Where the network won't
+allow it — which is common on school wifi — the connection needs a **TURN
+relay**, and that is the one part of Scriber that needs a real backend:
+
+1. Get a TURN server. Any coturn instance works, as do hosted providers
+   (Metered, Twilio, Cloudflare) — what matters is that it supports the
+   standard TURN REST scheme with a shared secret.
+2. Set `TURN_URLS` (comma-separated, e.g.
+   `turn:turn.example.com:3478,turns:turn.example.com:5349`) and `TURN_SECRET`
+   in the Vercel project's environment variables.
+3. Redeploy. `api/ice-servers.ts` starts minting twelve-hour credentials from
+   that secret, so the secret itself never reaches a browser.
+
+With those unset the endpoint returns STUN only and sharing still works
+wherever a direct connection is possible — it simply fails to connect for
+students behind stricter networks. Nothing else in the app depends on this.
 
 ### When something goes wrong
 
@@ -286,6 +316,26 @@ VITE_USE_EMULATORS=true npm run dev  # in another
 
 The build writes a `404.html` copy of the app so deep links work — GitHub Pages
 has no SPA rewrite of its own.
+
+### Vercel
+
+The only host here that runs the `api/` functions, so it's the one to use if
+screen sharing has to work behind a school network (see "Screen sharing").
+
+1. **vercel.com → Add New → Project**, import this repository.
+2. Vercel reads `vercel.json`: framework Vite, build `npm run build`, output
+   `dist`. Leave all of it alone.
+3. Under **Environment Variables**, leave the `VITE_FIREBASE_*` values unset
+   unless you're pointing at a different Firebase project — the committed
+   config in `src/lib/firebase.ts` is the default. Do **not** set `VITE_BASE`;
+   Vercel serves from the root.
+4. Deploy, then add the deployment's domain under Firebase **Authentication →
+   Settings → Authorised domains**, or Google sign-in will refuse to run on
+   it. Add both the production domain and any custom domain.
+5. Optional, for TURN: add `TURN_URLS` and `TURN_SECRET` and redeploy.
+
+`vercel.json` rewrites everything except `/api/*` to `index.html`, so deep
+links work without the `404.html` trick GitHub Pages needs.
 
 ### Render
 

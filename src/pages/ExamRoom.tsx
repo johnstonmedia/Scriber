@@ -8,6 +8,8 @@ import {
   finishTestParticipant,
   getSecureTestPaper,
   joinTestSession,
+  logIntegrityAlert,
+  setParticipantSharing,
   subscribeMyParticipant,
   subscribeTestSession,
   updateTestProgress,
@@ -17,6 +19,13 @@ import {
   type TestSession,
 } from '../lib/testSession'
 import { useExamIntegrity } from '../lib/examIntegrity'
+import {
+  captureScreen,
+  loadIceConfig,
+  publishScreen,
+  screenShareSupported,
+  WholeScreenRequired,
+} from '../lib/screenShare'
 import { appError, type AppError } from '../lib/errors'
 import { ErrorNotice } from '../components/ErrorNotice'
 import { CommandDrawer } from '../components/CommandReference'
@@ -129,6 +138,8 @@ export function ExamRoom() {
   const [securePaper, setSecurePaper] = useState<SecureTestPaper | null>(null)
   const [me, setMe] = useState<TestParticipant | null>(null)
   const [org, setOrg] = useState<Organisation | null>(null)
+  const [screenStream, setScreenStream] = useState<MediaStream | null>(null)
+  const [screenNotice, setScreenNotice] = useState<string | null>(null)
   const testAttemptStarted = useRef(false)
 
   /** Whichever source this practice paper came from — personal or distributed. */
@@ -539,6 +550,59 @@ export function ExamRoom() {
     }
   }, [])
 
+  // Screen sharing is a condition of sitting the test, so it starts in the
+  // waiting room and runs until the student leaves — the supervisor needs to
+  // see the screen during reading time as much as during working time.
+  async function startSharing() {
+    setScreenNotice(null)
+    try {
+      const stream = await captureScreen()
+      // Ending the share from the browser's own "stop sharing" bar is the
+      // obvious way around this, so it's reported rather than ignored.
+      stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+        setScreenStream(null)
+        setScreenNotice('Your screen share stopped. Start it again — your supervisor has been told.')
+        if (orgId && testId && user) {
+          void logIntegrityAlert(orgId, testId, {
+            uid: user.uid,
+            name: user.name,
+            type: 'screen-share-stopped',
+          }).catch(() => undefined)
+        }
+      })
+      setScreenStream(stream)
+    } catch (err) {
+      setScreenNotice(
+        err instanceof WholeScreenRequired
+          ? 'Share your whole screen, not a single tab or window, then try again.'
+          : 'Screen sharing was blocked. Allow it to sit this test.',
+      )
+    }
+  }
+
+  useEffect(() => {
+    if (!screenStream || !orgId || !testId || !user) return
+    let stop: (() => void) | undefined
+    let cancelled = false
+    void loadIceConfig().then((iceConfig) => {
+      if (cancelled) return
+      stop = publishScreen({ orgId, testId, uid: user.uid, stream: screenStream, iceConfig })
+    })
+    return () => {
+      cancelled = true
+      stop?.()
+    }
+  }, [screenStream, orgId, testId, user])
+
+  // Leaving the exam room stops the capture — nothing keeps recording after
+  // the test, and the browser's own sharing indicator goes away with it.
+  useEffect(() => () => screenStream?.getTracks().forEach((track) => track.stop()), [screenStream])
+
+  useEffect(() => {
+    if (!orgId || !testId || !user) return
+    void setParticipantSharing(orgId, testId, user.uid, !!screenStream).catch(() => undefined)
+  }, [screenStream, orgId, testId, user])
+
   useExamIntegrity({
     active: isLiveTest && (phase === 'reading' || phase === 'working'),
     orgId,
@@ -884,13 +948,15 @@ export function ExamRoom() {
               {test && <span className="badge badge-accent">{RULE_PROFILES[test.ruleProfile].full}</span>}
             </div>
             <div className="stack gap-2">
-              <strong className="small">While you wait, check these</strong>
+              <strong className="small">Before your supervisor begins</strong>
               <div className="row gap-2 wrap">
                 <span className={`badge ${supported ? 'badge-good' : 'badge-warn'}`}>
                   {supported ? 'Microphone available' : 'No speech in this browser'}
                 </span>
+                <span className={`badge ${screenStream ? 'badge-good' : 'badge-warn'}`}>
+                  {screenStream ? 'Screen shared' : 'Screen not shared'}
+                </span>
                 <span className="badge">Close every other tab and app</span>
-                <span className="badge">Headphones in, if you use them</span>
               </div>
               {!supported && (
                 <p className="small" style={{ color: 'var(--live)' }}>
@@ -899,6 +965,35 @@ export function ExamRoom() {
                 </p>
               )}
             </div>
+
+            {!screenStream && (
+              <div className="stack gap-2">
+                <p className="small muted">
+                  Sitting this test means sharing your screen with your supervisor for its whole
+                  length, the same as being watched in an exam room. Choose your{' '}
+                  <strong>entire screen</strong> — a single tab isn't enough.
+                </p>
+                <button
+                  className="btn btn-primary"
+                  style={{ alignSelf: 'flex-start' }}
+                  onClick={() => void startSharing()}
+                  disabled={!screenShareSupported()}
+                >
+                  Share my screen
+                </button>
+                {!screenShareSupported() && (
+                  <p className="small" style={{ color: 'var(--live)' }}>
+                    This browser can't share a screen. Open the test in Chrome or Edge on a
+                    computer.
+                  </p>
+                )}
+                {screenNotice && (
+                  <p className="small" style={{ color: 'var(--live)' }}>
+                    {screenNotice}
+                  </p>
+                )}
+              </div>
+            )}
             <p className="muted small">
               Your supervisor starts the test for the whole class at once, and can see when you leave
               this tab. This screen updates itself — don't refresh.
@@ -1016,6 +1111,19 @@ export function ExamRoom() {
           <button className="btn btn-sm" onClick={() => setRepeatAsk(null)}>
             Got it
           </button>
+        </div>
+      )}
+
+      {isLiveTest && !screenStream && (
+        <div className="alert alert-error no-print" style={{ borderRadius: 0 }}>
+          <div className="row gap-3 wrap">
+            <span className="grow">
+              {screenNotice ?? 'Your screen is not being shared. Your supervisor can see that it stopped.'}
+            </span>
+            <button className="btn btn-sm" onClick={() => void startSharing()}>
+              Share my screen
+            </button>
+          </div>
         </div>
       )}
 

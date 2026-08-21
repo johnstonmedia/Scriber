@@ -68,6 +68,8 @@ export type TestParticipant = {
   /** Epoch ms the pause lifts on its own — null means it waits for the teacher to resume it manually. */
   pauseEndsAt: number | null
   pausedBy: string | null
+  /** Whether this student's screen is being shared with the supervisor right now. */
+  sharing: boolean
 }
 
 /** How long before a test's scheduled time a student may enter the waiting room. */
@@ -82,6 +84,7 @@ export type IntegrityAlertType =
   | 'devtools-shortcut'
   | 'devtools-suspected'
   | 'context-menu'
+  | 'screen-share-stopped'
 
 export type IntegrityAlert = {
   id: string
@@ -149,6 +152,7 @@ function toTestParticipant(snapshot: QueryDocumentSnapshot<DocumentData>): TestP
     paused: data.paused === true,
     pauseEndsAt: typeof data.pauseEndsAt === 'number' ? data.pauseEndsAt : null,
     pausedBy: typeof data.pausedBy === 'string' ? data.pausedBy : null,
+    sharing: data.sharing === true,
   }
 }
 
@@ -163,6 +167,7 @@ function toIntegrityAlert(snapshot: QueryDocumentSnapshot<DocumentData>): Integr
     'devtools-shortcut',
     'devtools-suspected',
     'context-menu',
+    'screen-share-stopped',
   ]
   return {
     id: snapshot.id,
@@ -335,6 +340,16 @@ export async function joinTestSession(
     { uid: profile.uid, name: profile.name, status: 'ready', wordCount: 0, preview: '', updatedAt: serverTimestamp() },
     { merge: true },
   )
+}
+
+/** Whether this student's screen is reaching the supervisor right now. */
+export async function setParticipantSharing(
+  orgId: string,
+  testId: string,
+  uid: string,
+  sharing: boolean,
+): Promise<void> {
+  await setDoc(participantDoc(orgId, testId, uid), { uid, sharing, updatedAt: serverTimestamp() }, { merge: true })
 }
 
 export async function startReading(orgId: string, testId: string, readingMinutes: number): Promise<void> {

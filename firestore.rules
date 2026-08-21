@@ -296,6 +296,20 @@ service cloud.firestore {
             && request.resource.data.get('pausedBy', null) == resource.data.get('pausedBy', null);
           // Staff pause, resume and otherwise manage any participant row.
           allow write: if isOrgTeacher(orgId);
+
+          // The screen-share handshake — a supervisor's offer, the student's
+          // answer, and the network candidates each side finds. Only these
+          // two parties can touch it, and none of it means anything once the
+          // connection is up: the video is peer-to-peer and never passes
+          // through Firestore at all. A classmate can't reach this, since
+          // they aren't the owner of this participant document.
+          match /viewers/{viewerUid} {
+            allow read, write: if isOwner(uid) || isOrgTeacher(orgId);
+
+            match /{candidateSet}/{candidateId} {
+              allow read, write: if isOwner(uid) || isOrgTeacher(orgId);
+            }
+          }
         }
 
         // The test's own questions, snapshotted at creation. THIS is what

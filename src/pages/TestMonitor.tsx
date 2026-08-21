@@ -5,6 +5,7 @@ import { getClass, getOrganisation, type Organisation, type OrgClass } from '../
 import { RULE_PROFILES } from '../lib/ruleProfile'
 import { appError, type AppError } from '../lib/errors'
 import { ErrorNotice } from '../components/ErrorNotice'
+import { StudentScreen } from '../components/StudentScreen'
 import {
   finishTestSession,
   pauseParticipant,
@@ -37,6 +38,7 @@ const ALERT_LABEL: Record<IntegrityAlertType, string> = {
   'devtools-shortcut': 'Pressed a developer-tools shortcut',
   'devtools-suspected': 'Developer tools may be open',
   'context-menu': 'Opened the right-click menu',
+  'screen-share-stopped': 'Stopped sharing their screen',
 }
 
 /** Anything above this is worth the teacher's eye, not just the log. */
@@ -137,6 +139,7 @@ export function TestMonitor() {
   const activeCount = participants.filter((p) => p.status === 'active').length
   const finishedCount = participants.filter((p) => p.status === 'finished').length
   const totalStudents = orgClass?.studentIds.length ?? null
+  const notSharing = participants.filter((p) => !p.sharing)
   const alertsByUid = alerts.reduce<Record<string, number>>((acc, a) => {
     acc[a.uid] = (acc[a.uid] ?? 0) + 1
     return acc
@@ -197,10 +200,21 @@ export function TestMonitor() {
           <div className="label">Finished</div>
         </div>
         <div className="stat">
+          <div className="value">{participants.filter((p) => p.sharing).length}</div>
+          <div className="label">Sharing screen</div>
+        </div>
+        <div className="stat">
           <div className="value">{alerts.length}</div>
           <div className="label">Alerts</div>
         </div>
       </div>
+
+      {test.phase === 'lobby' && notSharing.length > 0 && (
+        <div className="alert alert-warn" style={{ marginBottom: 22 }}>
+          Waiting on {notSharing.map((p) => p.name).join(', ')} to share their screen. You can still
+          begin — they'll be flagged until they do.
+        </div>
+      )}
 
       <div className="row gap-2 wrap" style={{ marginBottom: 22 }}>
         {test.phase === 'lobby' && (
@@ -288,13 +302,36 @@ export function TestMonitor() {
                   )}
                 </div>
                 {expanded === p.uid ? (
-                  <div className="card card-pad" style={{ whiteSpace: 'pre-wrap', maxHeight: 320, overflowY: 'auto' }}>
-                    {p.preview ? `…${p.preview}` : 'Nothing written yet.'}
+                  <div className="stack gap-2">
+                    {user && (
+                      <StudentScreen
+                        orgId={orgId}
+                        testId={testId}
+                        studentUid={p.uid}
+                        viewerUid={user.uid}
+                        sharing={p.sharing}
+                        large
+                      />
+                    )}
+                    <div className="card card-pad" style={{ whiteSpace: 'pre-wrap', maxHeight: 260, overflowY: 'auto' }}>
+                      {p.preview ? `…${p.preview}` : 'Nothing written yet.'}
+                    </div>
                   </div>
                 ) : (
-                  test.phase === 'working' && (
-                    <div className="small muted">{p.preview ? `…${p.preview}` : 'Nothing written yet.'}</div>
-                  )
+                  <div className="row gap-3 wrap" style={{ alignItems: 'flex-start' }}>
+                    {user && (
+                      <StudentScreen
+                        orgId={orgId}
+                        testId={testId}
+                        studentUid={p.uid}
+                        viewerUid={user.uid}
+                        sharing={p.sharing}
+                      />
+                    )}
+                    {test.phase === 'working' && (
+                      <div className="small muted grow">{p.preview ? `…${p.preview}` : 'Nothing written yet.'}</div>
+                    )}
+                  </div>
                 )}
               </div>
             ))

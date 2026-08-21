@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import {
@@ -64,13 +64,18 @@ export function OrganisationConsole() {
   const [requests, setRequests] = useState<JoinRequest[]>([])
   const [domains, setDomains] = useState<OrgDomain[]>([])
 
+  // Deliberately keyed on the uid rather than the profile object: the auth
+  // context hands out a fresh profile whenever anything on it changes, and
+  // depending on the object itself re-ran this whole load — and remounted the
+  // dashboard under it — every time that happened.
+  const uid = user?.uid
   const refresh = useCallback(async () => {
-    if (!orgId || !user || !role) return
+    if (!orgId || !uid || !role) return
     setError(null)
     try {
       const [nextOrg, nextClasses, nextPapers] = await Promise.all([
         getOrganisation(orgId),
-        isStaff ? listAllClasses(orgId) : listMyClasses(orgId, user.uid),
+        isStaff ? listAllClasses(orgId) : listMyClasses(orgId, uid),
         listOrgPapers(orgId),
       ])
       setOrg(nextOrg)
@@ -92,7 +97,7 @@ export function OrganisationConsole() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load this organisation.')
     }
-  }, [orgId, user, role, isStaff, isAdmin])
+  }, [orgId, uid, role, isStaff, isAdmin])
 
   useEffect(() => {
     void refresh()
@@ -111,7 +116,12 @@ export function OrganisationConsole() {
     )
   }
 
-  const myClasses = isAdmin ? classes : isStaff ? classes.filter((c) => c.teacherIds.includes(user!.uid)) : classes
+  // Memoised because ClassTests subscribes per class: a fresh array on every
+  // render would tear down and rebuild every test listener each time.
+  const myClasses = useMemo(
+    () => (isStaff && !isAdmin ? classes.filter((c) => c.teacherIds.includes(uid!)) : classes),
+    [classes, isStaff, isAdmin, uid],
+  )
 
   async function handleCreateClass(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()

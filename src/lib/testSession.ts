@@ -142,6 +142,33 @@ export function subscribeClassTests(
   return onSnapshot(q, (snapshot) => cb(snapshot.docs.map(toTestSession)))
 }
 
+/**
+ * Every not-yet-finished test across every class a student belongs to, in
+ * any of their organisations — the "upcoming tasks" the homepage surfaces.
+ * One live query per organisation (classId 'in' covers every class within
+ * it at once), merged as each updates.
+ */
+export function subscribeUpcomingTests(
+  memberships: { orgId: string; orgName: string; classIds: string[] }[],
+  cb: (tests: (TestSession & { orgName: string })[]) => void,
+): Unsubscribe {
+  const byOrg = new Map<string, (TestSession & { orgName: string })[]>()
+  const emit = () => cb([...byOrg.values()].flat().filter((t) => t.phase !== 'finished'))
+  const unsubs = memberships
+    .filter((m) => m.classIds.length > 0)
+    .map((m) => {
+      const q = query(testsRef(m.orgId), where('classId', 'in', m.classIds.slice(0, 30)))
+      return onSnapshot(q, (snapshot) => {
+        byOrg.set(
+          m.orgId,
+          snapshot.docs.map((d) => ({ ...toTestSession(d), orgName: m.orgName })),
+        )
+        emit()
+      })
+    })
+  return () => unsubs.forEach((unsub) => unsub())
+}
+
 export function subscribeTestSession(
   orgId: string,
   testId: string,

@@ -331,7 +331,12 @@ export async function updateOrganisation(
   await updateDoc(orgDoc(orgId), patch)
 }
 
-/** For the "request to join" directory — every org a signed-in user may browse. */
+/**
+ * Every organisation on the platform. Used by the site admin console (which
+ * genuinely needs to see everything) and as the backing data for a signed-in
+ * user's org search — never rendered as a browsable list on its own, so
+ * nobody can see who else is on Scriber just by looking.
+ */
 export async function listOrganisationDirectory(): Promise<Organisation[]> {
   const snapshot = await getDocs(query(collection(db, 'organisations'), orderBy('name')))
   return snapshot.docs.map(toOrganisation)

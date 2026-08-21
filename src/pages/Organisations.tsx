@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import {
@@ -12,27 +12,41 @@ import {
 
 /**
  * Where a signed-in user finds organisations: the ones they already belong
- * to, an invite waiting on their email, or a directory to browse and request
- * access to. Creating a new organisation also happens here.
+ * to, an invite waiting on their email, or a search to find one and request
+ * access. There's deliberately no browsable list of every school on the
+ * platform — you have to already know its name. Creating a new organisation
+ * also happens here.
  */
 export function Organisations() {
-  const { user, memberships, pendingInvites, canCreateOrg, refreshMemberships } = useAuth()
+  const { user, memberships, pendingInvites, canCreateOrg, refreshMemberships, orgStateError } = useAuth()
   const navigate = useNavigate()
 
-  const [directory, setDirectory] = useState<Organisation[]>([])
+  const [directory, setDirectory] = useState<Organisation[] | null>(null)
+  const [searchTerm, setSearchTerm] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [creating, setCreating] = useState(false)
   const [requested, setRequested] = useState<Set<string>>(new Set())
 
-  useEffect(() => {
-    listOrganisationDirectory()
-      .then(setDirectory)
-      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load organisations.'))
-  }, [])
-
   const myOrgIds = new Set(memberships.map((m) => m.orgId))
+
+  // Fetched once, on the first search — never on page load, so there's
+  // nothing to browse without typing something first.
+  async function ensureDirectoryLoaded() {
+    if (directory !== null) return
+    try {
+      setDirectory(await listOrganisationDirectory())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not search organisations.')
+    }
+  }
+
+  const term = searchTerm.trim().toLowerCase()
+  const results =
+    term.length < 2
+      ? []
+      : (directory ?? []).filter((org) => !myOrgIds.has(org.id) && org.name.toLowerCase().includes(term))
 
   async function handleAccept(orgId: string) {
     if (!user) return
@@ -121,6 +135,15 @@ export function Organisations() {
       )}
 
       {error && <div className="alert alert-error" style={{ marginBottom: 16 }}>{error}</div>}
+      {orgStateError && (
+        <div className="alert alert-error" style={{ marginBottom: 16 }}>
+          Couldn't load your organisations ({orgStateError}) — your existing memberships and admin
+          roles may not be showing correctly.{' '}
+          <button className="btn btn-sm" onClick={() => void refreshMemberships()}>
+            Try again
+          </button>
+        </div>
+      )}
 
       {showCreate && (
         <form className="card card-pad stack gap-3" style={{ marginBottom: 24 }} onSubmit={handleCreate}>
@@ -190,13 +213,28 @@ export function Organisations() {
 
       <section>
         <h2 style={{ marginBottom: 12 }}>Find an organisation</h2>
-        {directory.length === 0 ? (
-          <div className="empty">No organisations have been created yet.</div>
-        ) : (
+        <p className="small muted" style={{ marginTop: -6, marginBottom: 12 }}>
+          Search by name — there's no list to browse, so you'll need to know what your school or
+          tutoring group is called on Scriber.
+        </p>
+        <input
+          className="input"
+          style={{ maxWidth: 360, marginBottom: 16 }}
+          placeholder="Search organisations…"
+          value={searchTerm}
+          onChange={(e) => {
+            setSearchTerm(e.target.value)
+            void ensureDirectoryLoaded()
+          }}
+        />
+        {term.length >= 2 && (
           <div className="card">
-            {directory
-              .filter((org) => !myOrgIds.has(org.id))
-              .map((org, index) => (
+            {results.length === 0 ? (
+              <div className="empty" style={{ border: 'none' }}>
+                No organisation matches "{searchTerm.trim()}".
+              </div>
+            ) : (
+              results.map((org, index) => (
                 <div
                   key={org.id}
                   className="row gap-3 wrap"
@@ -229,11 +267,7 @@ export function Organisations() {
                     </button>
                   )}
                 </div>
-              ))}
-            {directory.every((org) => myOrgIds.has(org.id)) && (
-              <div className="empty" style={{ border: 'none' }}>
-                You already belong to every listed organisation.
-              </div>
+              ))
             )}
           </div>
         )}

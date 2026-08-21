@@ -6,6 +6,7 @@ import {
   createClass,
   deleteClass,
   deleteOrgPaper,
+  distributeOrgPaper,
   getOrganisation,
   inviteMember,
   listAllClasses,
@@ -17,7 +18,6 @@ import {
   listOrgPapers,
   removeStudentFromClass,
   setClassQuestions,
-  uploadOrgPaper,
   type Invite,
   type JoinRequest,
   type Membership,
@@ -27,7 +27,6 @@ import {
   type OrgPaper,
   type OrgRole,
 } from '../lib/org'
-import { canExtractQuestions, extractQuestions } from '../lib/questionExtract'
 import { ClassTests } from '../components/ClassTests'
 import { OrgAdminDashboard } from './OrgAdminDashboard'
 
@@ -159,8 +158,7 @@ export function OrganisationConsole() {
       return
     }
     try {
-      const questions = canExtractQuestions(file.type) ? await extractQuestions(file) : []
-      await uploadOrgPaper(orgId, user.uid, file, {
+      await distributeOrgPaper(orgId, user.uid, file, {
         title: String(form.get('title') || '').trim() || file.name.replace(/\.[^.]+$/, ''),
         subject: String(form.get('subject') || '').trim() || undefined,
         year: Number(form.get('year')) || undefined,
@@ -169,7 +167,6 @@ export function OrganisationConsole() {
         classIds: myClasses
           .filter((c) => form.getAll('classIds').includes(c.id))
           .map((c) => c.id),
-        questions,
       })
       formEl.reset()
       await refresh()
@@ -242,8 +239,8 @@ export function OrganisationConsole() {
               <h2>Distribute a paper</h2>
               <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
                 <div className="field">
-                  <label htmlFor="opFile">File (PDF, image or text)</label>
-                  <input id="opFile" name="file" type="file" className="input" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt" required />
+                  <label htmlFor="opFile">File (PDF or text)</label>
+                  <input id="opFile" name="file" type="file" className="input" accept=".pdf,.txt" required />
                 </div>
                 <div className="field">
                   <label htmlFor="opTitle">Title</label>

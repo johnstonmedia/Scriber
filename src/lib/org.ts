@@ -29,14 +29,9 @@ import {
   type DocumentData,
   type QueryDocumentSnapshot,
 } from 'firebase/firestore'
-import {
-  deleteObject,
-  getDownloadURL,
-  ref,
-  uploadBytes,
-} from 'firebase/storage'
 import { sendPasswordResetEmail } from 'firebase/auth'
-import { auth, db, storage } from './firebase'
+import { auth, db } from './firebase'
+import { extractQuestions } from './questionExtract'
 import type { ExtractedQuestion } from './questionSplit'
 
 export type OrgRole = 'student' | 'teacher' | 'admin'
@@ -106,13 +101,13 @@ export type OrgPaper = {
   readingMinutes: number
   workingMinutes: number
   classIds: string[]
-  fileName: string
-  mimeType: string
-  byteSize: number
-  storagePath: string
   uploadedBy: string
   createdAt: string
-  /** Questions pattern-split out of the paper's text, if any were found. */
+  /**
+   * The paper's own content, pattern-split into questions — this, not a
+   * file, is what students actually see. Nothing about the original upload
+   * is kept once this is extracted.
+   */
   questions: ExtractedQuestion[]
   /**
    * Which of those questions a given class is assigned. A class with no
@@ -245,10 +240,6 @@ function toOrgPaper(snapshot: QueryDocumentSnapshot<DocumentData>): OrgPaper {
     readingMinutes: Number(data.readingMinutes ?? 5),
     workingMinutes: Number(data.workingMinutes ?? 120),
     classIds: Array.isArray(data.classIds) ? data.classIds : [],
-    fileName: String(data.fileName ?? ''),
-    mimeType: String(data.mimeType ?? 'application/pdf'),
-    byteSize: Number(data.byteSize ?? 0),
-    storagePath: String(data.storagePath ?? ''),
     uploadedBy: String(data.uploadedBy ?? ''),
     createdAt: isoOf(data.createdAt),
     questions,
@@ -635,13 +626,10 @@ export async function deleteClass(orgId: string, classId: string): Promise<void>
 
 // ------------------------------------------------------- distributed papers
 
-export const ORG_ACCEPTED_TYPES = [
-  'application/pdf',
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'text/plain',
-]
+// Only text-bearing formats — a distributed paper's content is its extracted
+// text, not a file, so anything that can't be read as text (a scanned image,
+// for instance) has nothing to distribute.
+export const ORG_ACCEPTED_TYPES = ['application/pdf', 'text/plain']
 export const ORG_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 export type OrgPaperDraft = {
@@ -651,33 +639,36 @@ export type OrgPaperDraft = {
   readingMinutes: number
   workingMinutes: number
   classIds: string[]
-  questions?: ExtractedQuestion[]
 }
 
 /**
- * Unlike a student's own papers, a distributed paper has to be reachable by
- * every student it's assigned to, so this one genuinely uploads to Cloud
- * Storage rather than staying local.
+ * A distributed paper's own file never reaches a server — its text is
+ * extracted client-side and that's the entire distributed content, rendered
+ * by the site itself (OrgPaperViewer). This keeps organisation distribution
+ * on the same footing as a student's own solo papers: no Storage bucket, no
+ * Blaze plan, nothing but Firestore and Auth.
  */
-export async function uploadOrgPaper(
+export async function distributeOrgPaper(
   orgId: string,
   uploaderUid: string,
   file: File,
   draft: OrgPaperDraft,
 ): Promise<OrgPaper> {
   if (!ORG_ACCEPTED_TYPES.includes(file.type)) {
-    throw new Error('Upload a PDF, image, or text file.')
+    throw new Error('Upload a PDF or text file.')
   }
   if (file.size > ORG_MAX_UPLOAD_BYTES) {
     throw new Error(`That file is too large. The limit is ${ORG_MAX_UPLOAD_BYTES / 1024 / 1024} MB.`)
   }
 
+  const questions = await extractQuestions(file)
+  if (questions.length === 0) {
+    throw new Error(
+      "Could not find any readable text in that file — it may be a scanned image. Try a text-based PDF or a .txt file.",
+    )
+  }
+
   const paperDoc = doc(orgPapersRef(orgId))
-  const safeName = file.name.replace(/[/\\]/g, '_').slice(0, 120)
-  const storagePath = `organisations/${orgId}/papers/${paperDoc.id}/${safeName}`
-
-  await uploadBytes(ref(storage, storagePath), file, { contentType: file.type })
-
   await setDoc(paperDoc, {
     title: draft.title,
     subject: draft.subject ?? null,
@@ -685,13 +676,9 @@ export async function uploadOrgPaper(
     readingMinutes: draft.readingMinutes,
     workingMinutes: draft.workingMinutes,
     classIds: draft.classIds,
-    fileName: safeName,
-    mimeType: file.type,
-    byteSize: file.size,
-    storagePath,
     uploadedBy: uploaderUid,
     createdAt: serverTimestamp(),
-    questions: draft.questions ?? [],
+    questions,
     classQuestions: {},
   })
 
@@ -710,13 +697,8 @@ export async function getOrgPaper(orgId: string, paperId: string): Promise<OrgPa
   return toOrgPaper(snapshot as QueryDocumentSnapshot<DocumentData>)
 }
 
-export async function orgPaperDownloadUrl(paper: OrgPaper): Promise<string> {
-  return getDownloadURL(ref(storage, paper.storagePath))
-}
-
 export async function deleteOrgPaper(orgId: string, paper: OrgPaper): Promise<void> {
   await deleteDoc(doc(orgPapersRef(orgId), paper.id))
-  await deleteObject(ref(storage, paper.storagePath)).catch(() => undefined)
 }
 
 /**

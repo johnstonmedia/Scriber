@@ -2,14 +2,18 @@
  * Firebase setup.
  *
  * The config values below are the public web-app keys. They are meant to be
- * visible in the bundle — access is controlled by the Firestore and Storage
- * security rules in this repo, not by hiding these strings.
+ * visible in the bundle — access is controlled by the Firestore security
+ * rules in this repo, not by hiding these strings.
+ *
+ * Deliberately just Auth and Firestore — no Storage. Every file a student or
+ * a distributing teacher deals with stays as extracted text in Firestore or
+ * on-device (see fileStore.ts and questionExtract.ts), so there's no bucket
+ * to provision and no Blaze-plan requirement to run this at all.
  */
 
 import { initializeApp, type FirebaseOptions } from 'firebase/app'
 import { connectAuthEmulator, getAuth } from 'firebase/auth'
 import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore'
-import { connectStorageEmulator, getStorage } from 'firebase/storage'
 
 /**
  * The project Scriber ships against. Committing these is deliberate: they are
@@ -22,7 +26,6 @@ const DEFAULT_CONFIG: FirebaseOptions = {
   apiKey: 'AIzaSyDBqPvwR81AZMqIYEsbihnnbYXUDwBYRzk',
   authDomain: 'pracscriber.firebaseapp.com',
   projectId: 'pracscriber',
-  storageBucket: 'pracscriber.firebasestorage.app',
   messagingSenderId: '861724048481',
   appId: '1:861724048481:web:ffcc182f1de0104a8abe20',
 }
@@ -33,7 +36,6 @@ const config: FirebaseOptions = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || DEFAULT_CONFIG.apiKey,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || DEFAULT_CONFIG.authDomain,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || DEFAULT_CONFIG.projectId,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || DEFAULT_CONFIG.storageBucket,
   messagingSenderId:
     import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || DEFAULT_CONFIG.messagingSenderId,
   appId: import.meta.env.VITE_FIREBASE_APP_ID || DEFAULT_CONFIG.appId,
@@ -52,13 +54,6 @@ const app = initializeApp(
 
 export const auth = getAuth(app)
 export const db = getFirestore(app)
-/**
- * Only organisation-distributed papers ever reach this bucket — a student's
- * own practice papers stay on their device (see fileStore.ts). Uploading here
- * requires the project's Storage bucket to actually exist, which in turn
- * requires the Blaze plan; solo/personal practice needs none of it.
- */
-export const storage = getStorage(app)
 
 /**
  * `npm run emulators` plus `VITE_USE_EMULATORS=true npm run dev` runs the whole
@@ -67,5 +62,4 @@ export const storage = getStorage(app)
 if (import.meta.env.VITE_USE_EMULATORS === 'true') {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true })
   connectFirestoreEmulator(db, '127.0.0.1', 8080)
-  connectStorageEmulator(storage, '127.0.0.1', 9199)
 }

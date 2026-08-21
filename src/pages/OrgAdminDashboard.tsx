@@ -273,8 +273,8 @@ export function OrgAdminDashboard(props: Props) {
                 <h2>Distribute a paper</h2>
                 <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
                   <div className="field">
-                    <label htmlFor="opFile">File (PDF, image or text)</label>
-                    <input id="opFile" name="file" type="file" className="input" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt" required />
+                    <label htmlFor="opFile">File (PDF or text)</label>
+                    <input id="opFile" name="file" type="file" className="input" accept=".pdf,.txt" required />
                   </div>
                   <div className="field">
                     <label htmlFor="opTitle">Title</label>

@@ -105,9 +105,10 @@ pay for.
 - **React + TypeScript + Vite** — no UI framework; the design system is plain
   CSS custom properties with light and dark themes.
 - **Firebase Auth** — Google sign-in and email/password.
-- **Cloud Firestore** — settings, paper metadata and practice sessions.
-- **IndexedDB** — the exam paper files, held on the student's own device. They
-  are never uploaded; only a paper's details go to Firestore.
+- **Cloud Firestore** — settings, paper metadata, practice sessions, and
+  organisation-distributed papers as extracted text.
+- **IndexedDB** — a student's own exam paper files, held on their own device.
+  They are never uploaded; only a paper's details go to Firestore.
 - **Web Speech API** — dictation (Chrome, Edge or Safari) and read-backs. Where
   speech recognition is unavailable, a keyboard box accepts the same dictation,
   commands and all.
@@ -122,7 +123,10 @@ users/{uid}/attempts/{attemptId}
 ```
 
 which reduces the security rules to a single ownership check. `firestore.rules`
-and `storage.rules` deny everything else, including any path outside that tree.
+denies everything else, including any path outside that tree. There is no
+Cloud Storage bucket at all — an organisation's distributed papers are parsed
+into text client-side and stored in Firestore the same as everything else
+(see "Organisations" below), so Scriber runs on Firestore and Auth alone.
 
 ### Layout
 
@@ -145,15 +149,16 @@ scripts/         security-rule checks and an end-to-end browser run
 5. Copy `.env.example` to `.env` and paste the values in, or edit the defaults in
    `src/lib/firebase.ts`.
 
-A student's own exam papers never leave the device — only an organisation's
-*distributed* papers use Cloud Storage (see "Organisations" below), which
-needs the Blaze (pay-as-you-go) plan rather than the free Spark tier.
+A student's own exam papers never leave the device, and an organisation's
+*distributed* papers are parsed into text client-side and stored in Firestore
+(see "Organisations" below) — nothing here needs Cloud Storage or the Blaze
+plan; the free Spark tier is enough.
 
 Then publish the rules and indexes:
 
 ```bash
 npx firebase login
-npx firebase deploy --only firestore:rules,firestore:indexes,storage:rules
+npx firebase deploy --only firestore:rules,firestore:indexes
 ```
 
 `firestore:indexes` matters as much as the rules do — two of the organisation

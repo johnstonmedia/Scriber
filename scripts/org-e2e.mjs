@@ -32,19 +32,32 @@ async function newPage() {
   return page
 }
 
-async function signUp(page, email, name) {
+/** Fills and submits the create-account form. Doesn't assume what comes next — an
+ * account with no invite waiting lands on the welcome walkthrough, but one a
+ * teacher already invited lands on the platform-wide verification gate instead. */
+async function createAccount(page, email, name) {
   await page.goto('http://localhost:5173/login', { waitUntil: 'domcontentloaded' })
   await page.getByRole('tab', { name: 'Create account' }).click()
   await page.getByLabel('Your name').fill(name)
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Password').fill('practice123')
   await page.getByRole('button', { name: 'Create account' }).click()
-  // A brand-new account lands on the one-time welcome walkthrough first —
-  // "Personal account" is the plain path into the existing invite/join
-  // flows this script drives by hand.
+}
+
+/** Clicks through the one-time welcome walkthrough as a personal account. */
+async function completeWelcomeAsPersonal(page, name) {
   await page.waitForSelector('text=How will you be using Scriber?', { timeout: 20000 })
   await page.getByRole('button', { name: 'Personal account' }).click()
   await page.waitForSelector(`text=Hello, ${name.split(' ')[0]}`, { timeout: 20000 })
+}
+
+/** The plain path for an account with no invite waiting: sign up, then go personal. */
+async function signUp(page, email, name) {
+  await createAccount(page, email, name)
+  // A brand-new account lands on the one-time welcome walkthrough first —
+  // "Personal account" is the plain path into the existing invite/join
+  // flows this script drives by hand.
+  await completeWelcomeAsPersonal(page, name)
 }
 
 /**
@@ -53,7 +66,10 @@ async function signUp(page, email, name) {
  * its still-valid cached ID token rather than minting a fresh one, so the
  * browser's session would keep asserting the old, unverified claim. Signing
  * out and back in forces a brand new token, the same way a real "click the
- * verification link, then sign in again" would.
+ * verification link, then sign in again" would. Doesn't assume what screen
+ * comes next — every call site navigates immediately afterwards anyway,
+ * except a pre-invited account, which lands on the welcome walkthrough for
+ * the first time only once this clears the verification gate.
  */
 async function verifyEmail(page, email) {
   const signInResp = await fetch(
@@ -79,7 +95,13 @@ async function verifyEmail(page, email) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ oobCode: code }),
   })
-  await page.getByRole('button', { name: 'Sign out' }).click()
+  const signOutButton = page.getByRole('button', { name: 'Sign out' })
+  await signOutButton.click()
+  // signOut() is async — navigating to /login before the client has actually
+  // finished reacting to the auth-state change races the app's own
+  // redirect and can leave the login form never mounting. Wait for the very
+  // button just clicked to disappear as confirmation sign-out landed first.
+  await signOutButton.waitFor({ state: 'detached', timeout: 10000 }).catch(() => undefined)
   await signIn(page, email)
 }
 
@@ -88,7 +110,10 @@ async function signIn(page, email) {
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Password').fill('practice123')
   await page.getByRole('button', { name: 'Sign in' }).click()
-  await page.waitForSelector('text=Hello,', { timeout: 20000 })
+  // Where this lands varies (Dashboard for an already-onboarded account,
+  // welcome walkthrough for a first-timer just cleared through the
+  // verification gate) — every caller waits for its own next thing.
+  await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 20000 })
 }
 
 // ---------------------------------------------------------------- 1. admin
@@ -127,8 +152,13 @@ console.log('teacher invited')
 // -------------------------------------------------------------- 2. teacher
 
 const teacherPage = await newPage()
-await signUp(teacherPage, emails.teacher, 'Teacher Person')
+await createAccount(teacherPage, emails.teacher, 'Teacher Person')
+// The admin already invited this address before it existed — the
+// platform-wide verification gate blocks everything, welcome walkthrough
+// included, until that's cleared.
+await teacherPage.waitForSelector('text=Verify your email to continue', { timeout: 20000 })
 await verifyEmail(teacherPage, emails.teacher)
+await completeWelcomeAsPersonal(teacherPage, 'Teacher Person')
 await teacherPage.goto('http://localhost:5173/organisations', { waitUntil: 'domcontentloaded' })
 await teacherPage.waitForSelector('text=Waiting for you', { timeout: 15000 })
 await teacherPage.getByRole('button', { name: 'Accept invitation' }).click()
@@ -161,6 +191,8 @@ const studentPage = await newPage()
 await signUp(studentPage, emails.student, 'Student Person')
 await verifyEmail(studentPage, emails.student)
 await studentPage.goto('http://localhost:5173/organisations', { waitUntil: 'domcontentloaded' })
+// There's no browsable list any more — search for it by name.
+await studentPage.getByPlaceholder('Search organisations…').fill(ORG_NAME)
 await studentPage.waitForSelector(`text=${ORG_NAME}`, { timeout: 15000 })
 await studentPage
   .locator('.row', { hasText: ORG_NAME })

@@ -4,6 +4,7 @@ import { useAuth } from '../lib/auth'
 import { storedPaperIds, usedBytes } from '../lib/fileStore'
 import { sha256 } from '../lib/hash'
 import { RULE_PROFILES } from '../lib/ruleProfile'
+import { subscribeUpcomingTests, type TestSession } from '../lib/testSession'
 import {
   attachPaperFile,
   createPaper,
@@ -13,6 +14,13 @@ import {
   type Attempt,
   type Paper,
 } from '../lib/data'
+
+const PHASE_LABEL: Record<TestSession['phase'], string> = {
+  lobby: 'Waiting room',
+  reading: 'Reading time',
+  working: 'In progress',
+  finished: 'Finished',
+}
 
 const relative = (iso: string) => {
   const diff = Date.now() - new Date(iso).getTime()
@@ -30,7 +38,7 @@ const relative = (iso: string) => {
 const minutes = (ms: number) => `${Math.max(1, Math.round(ms / 60_000))} min`
 
 export function Dashboard() {
-  const { user } = useAuth()
+  const { user, memberships } = useAuth()
   const navigate = useNavigate()
   const [papers, setPapers] = useState<Paper[]>([])
   const [attempts, setAttempts] = useState<Attempt[]>([])
@@ -40,6 +48,15 @@ export function Dashboard() {
   /** Papers whose file is actually on this device. */
   const [heldHere, setHeldHere] = useState<Set<string>>(new Set())
   const [deviceBytes, setDeviceBytes] = useState(0)
+  const [upcomingTests, setUpcomingTests] = useState<(TestSession & { orgName: string })[]>([])
+
+  useEffect(() => {
+    if (memberships.length === 0) {
+      setUpcomingTests([])
+      return
+    }
+    return subscribeUpcomingTests(memberships, setUpcomingTests)
+  }, [memberships])
 
   const refresh = useCallback(async () => {
     if (!user) return
@@ -156,6 +173,81 @@ export function Dashboard() {
         <div className="alert alert-error" style={{ marginBottom: 16 }}>
           {error}
         </div>
+      )}
+
+      <div className="stat-grid" style={{ marginBottom: 24 }}>
+        <div className="stat">
+          <div className="value">{papers.length}</div>
+          <div className="label">Papers</div>
+        </div>
+        <div className="stat">
+          <div className="value">{attempts.filter((a) => a.status === 'finished').length}</div>
+          <div className="label">Finished sessions</div>
+        </div>
+        <div className="stat">
+          <div className="value">
+            {attempts.reduce((sum, a) => sum + (a.stats.words ?? 0), 0).toLocaleString()}
+          </div>
+          <div className="label">Words written</div>
+        </div>
+        <div className="stat">
+          <div className="value">
+            {Math.round(attempts.reduce((sum, a) => sum + a.durationMs, 0) / 60_000)}
+          </div>
+          <div className="label">Minutes practised</div>
+        </div>
+      </div>
+
+      {upcomingTests.length > 0 && (
+        <section style={{ marginBottom: 28 }}>
+          <h2 style={{ marginBottom: 12 }}>Upcoming tasks</h2>
+          <div className="card">
+            {upcomingTests.map((t, i) => (
+              <div
+                key={t.id}
+                className="row gap-3 wrap"
+                style={{ padding: '14px 18px', borderTop: i === 0 ? 'none' : '1px solid var(--line)' }}
+              >
+                <div className="grow">
+                  <strong>{t.title}</strong>
+                  <div className="small muted">
+                    {t.orgName} · {t.className}
+                  </div>
+                </div>
+                <span className={`badge ${t.phase === 'lobby' ? 'badge-accent' : 'badge-live'}`}>
+                  {PHASE_LABEL[t.phase]}
+                </span>
+                <Link className="btn btn-sm btn-primary" to={`/exam?org=${t.orgId}&test=${t.id}`}>
+                  {t.phase === 'lobby' ? 'Join waiting room' : 'Join test'}
+                </Link>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {memberships.length > 0 && (
+        <section style={{ marginBottom: 28 }}>
+          <h2 style={{ marginBottom: 12 }}>Your organisations</h2>
+          <div className="grid grid-cards">
+            {memberships.map((m) => (
+              <article className="card card-pad stack gap-3" key={m.orgId}>
+                <div>
+                  <h3>{m.orgName || m.orgId}</h3>
+                  <span className="badge badge-accent">
+                    {m.role === 'admin' ? 'Admin' : m.role === 'teacher' ? 'Teacher' : 'Student'}
+                  </span>
+                </div>
+                <p className="small muted" style={{ margin: 0 }}>
+                  Distributed papers, tests and classes for {m.orgName || 'this organisation'}.
+                </p>
+                <Link className="btn btn-primary btn-sm" to={`/organisations/${m.orgId}`}>
+                  Open {m.orgName || 'organisation'}
+                </Link>
+              </article>
+            ))}
+          </div>
+        </section>
       )}
 
       {showUpload && (

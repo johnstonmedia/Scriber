@@ -92,7 +92,13 @@ async function verifyEmail(page, email) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ oobCode: code }),
   })
-  await page.getByRole('button', { name: 'Sign out' }).click()
+  const signOutButton = page.getByRole('button', { name: 'Sign out' })
+  await signOutButton.click()
+  // signOut() is async — navigating away before the client has actually
+  // reacted to the auth-state change races the app's own redirect and can
+  // leave the login form never mounting. Wait for the very button just
+  // clicked to disappear as confirmation sign-out landed first.
+  await signOutButton.waitFor({ state: 'detached', timeout: 10000 }).catch(() => undefined)
   await signIn(page, email)
 }
 

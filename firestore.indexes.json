@@ -15,6 +15,14 @@
         { "fieldPath": "classId", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "joinRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "requestedAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

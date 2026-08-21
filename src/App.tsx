@@ -12,6 +12,7 @@ import { AuthProvider, useAuth } from './lib/auth'
 import { Home } from './pages/Home'
 import { SignIn } from './pages/SignIn'
 import { Welcome } from './pages/Welcome'
+import { VerifyGate } from './pages/VerifyGate'
 import { Dashboard } from './pages/Dashboard'
 import { ExamRoom } from './pages/ExamRoom'
 import { SessionReview } from './pages/SessionReview'
@@ -96,7 +97,7 @@ function TopBar() {
 }
 
 function Shell() {
-  const { user, loading, onboarded } = useAuth()
+  const { user, loading, onboarded, pendingInvites } = useAuth()
   const location = useLocation()
 
   if (loading) {
@@ -114,6 +115,13 @@ function Shell() {
         <Route path="*" element={<Home />} />
       </Routes>
     )
+  }
+
+  // An invite means a specific organisation is expecting this address —
+  // verifying it comes before anything else on the platform, onboarding
+  // included, not just before accepting the invite itself.
+  if (pendingInvites.length > 0 && !user.emailVerified) {
+    return <VerifyGate />
   }
 
   // A brand-new account goes straight to the one-time walkthrough — every

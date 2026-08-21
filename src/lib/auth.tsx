@@ -74,6 +74,14 @@ type AuthValue = {
   canCreateOrg: boolean
   /** False only for a brand-new account that hasn't been through the welcome walkthrough yet. */
   onboarded: boolean
+  /**
+   * Set when loading memberships, invites or org-creator access failed —
+   * most often a Firestore index that hasn't been deployed yet. Falls back
+   * to empty/false so sign-in is never blocked, but that same fallback
+   * would otherwise read to a user as "my organisation vanished" with no
+   * indication why — surface it instead.
+   */
+  orgStateError: string | null
   /** Reload memberships/invites after joining, creating, or leaving an org. */
   refreshMemberships: () => Promise<void>
   signIn: (email: string, password: string) => Promise<void>
@@ -150,16 +158,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [siteAdmin, setSiteAdmin] = useState(false)
   const [canCreateOrg, setCanCreateOrg] = useState(false)
   const [onboarded, setOnboarded] = useState(true)
+  const [orgStateError, setOrgStateError] = useState<string | null>(null)
 
   const loadOrgState = useCallback(async (uid: string, email: string) => {
     // Falls back to empty/false on failure so a network hiccup never blocks
     // sign-in — but a query that needs a Firestore index not yet deployed
     // (collection-group queries do) fails the same way, silently, unless
-    // it's at least logged: a missing index here reads to a user as "my
+    // it's at least surfaced: a missing index here reads to a user as "my
     // organisation vanished," not as an error.
+    let firstFailure: string | null = null
     const logged = <T,>(label: string, promise: Promise<T>, fallback: T): Promise<T> =>
       promise.catch((err) => {
         console.error(`[org state] ${label} failed — falling back:`, err)
+        firstFailure ??= err instanceof Error ? err.message : String(err)
         return fallback
       })
     const [nextMemberships, nextInvites, nextSiteAdmin, nextCanCreateOrg] = await Promise.all([
@@ -172,6 +183,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setPendingInvites(nextInvites)
     setSiteAdmin(nextSiteAdmin)
     setCanCreateOrg(nextSiteAdmin || nextCanCreateOrg)
+    setOrgStateError(firstFailure)
   }, [])
 
   const refreshMemberships = useCallback(async () => {
@@ -329,6 +341,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       siteAdmin,
       canCreateOrg,
       onboarded,
+      orgStateError,
       refreshMemberships,
       signIn,
       signUp,
@@ -349,6 +362,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       siteAdmin,
       canCreateOrg,
       onboarded,
+      orgStateError,
       refreshMemberships,
       signIn,
       signUp,

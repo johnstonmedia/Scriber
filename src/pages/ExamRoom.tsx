@@ -22,10 +22,11 @@ import { useExamIntegrity } from '../lib/examIntegrity'
 import { announceTestEnd, announceTestStart, extensionInstalled } from '../lib/examExtension'
 import {
   captureScreen,
+  describeCaptureFailure,
   loadIceConfig,
   publishScreen,
   screenShareSupported,
-  WholeScreenRequired,
+  screenShareUnavailableReason,
 } from '../lib/screenShare'
 import { appError, type AppError } from '../lib/errors'
 import { ErrorNotice } from '../components/ErrorNotice'
@@ -573,11 +574,7 @@ export function ExamRoom() {
       })
       setScreenStream(stream)
     } catch (err) {
-      setScreenNotice(
-        err instanceof WholeScreenRequired
-          ? 'Share your whole screen, not a single tab or window, then try again.'
-          : 'Screen sharing was blocked. Allow it to sit this test.',
-      )
+      setScreenNotice(describeCaptureFailure(err))
     }
   }
 
@@ -991,10 +988,9 @@ export function ExamRoom() {
                 >
                   Share my screen
                 </button>
-                {!screenShareSupported() && (
+                {screenShareUnavailableReason() && (
                   <p className="small" style={{ color: 'var(--live)' }}>
-                    This browser can't share a screen. Open the test in Chrome or Edge on a
-                    computer.
+                    {screenShareUnavailableReason()}
                   </p>
                 )}
                 {screenNotice && (

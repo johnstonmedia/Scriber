@@ -52,14 +52,71 @@ export async function loadIceConfig(): Promise<RTCConfiguration> {
   }
 }
 
-export const screenShareSupported = () =>
-  typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia
+export const screenShareSupported = () => screenShareUnavailableReason() === null
+
+/**
+ * Why this browser can't share a screen, in words a student can act on, or
+ * null when it can.
+ *
+ * Worth separating rather than collapsing into one "not supported" message:
+ * an iPad, an insecure origin and a locked-down policy all fail the same
+ * check but need completely different things done about them, and a student
+ * ten minutes before an exam cannot be left to guess which they have.
+ */
+export function screenShareUnavailableReason(): string | null {
+  if (typeof navigator === 'undefined' || typeof window === 'undefined') return 'Not a browser.'
+  if (!window.isSecureContext) {
+    return 'Screen sharing needs a secure (https) connection. Open Scriber over https and try again.'
+  }
+  if (!navigator.mediaDevices) {
+    return 'This browser has blocked access to media devices. Try Chrome or Edge on a computer.'
+  }
+  if (!navigator.mediaDevices.getDisplayMedia) {
+    // Every iOS browser lands here, Safari included — it isn't a Safari
+    // setting, the API simply doesn't exist on iPhone or iPad.
+    return 'Phones and tablets cannot share a screen. Sit this test on a computer, using Chrome or Edge.'
+  }
+  const policy = (document as unknown as { featurePolicy?: { allowsFeature: (f: string) => boolean } })
+    .featurePolicy
+  if (policy && !policy.allowsFeature('display-capture')) {
+    return 'Screen sharing is blocked by this page\u2019s permissions policy. Tell your school\u2019s IT team.'
+  }
+  return null
+}
 
 /** Thrown when a student picks a single tab or window instead of their screen. */
 export class WholeScreenRequired extends Error {
   constructor() {
     super('whole screen required')
     this.name = 'WholeScreenRequired'
+  }
+}
+
+/**
+ * Turns what getDisplayMedia threw into something worth reading.
+ *
+ * The browser's own names are the only clue to a class of failures that look
+ * identical to a student — most importantly the macOS one, where Chrome is
+ * itself missing the system Screen Recording permission and the picker either
+ * never appears or comes up empty. "Permission denied" would send somebody
+ * hunting through Chrome's settings for a switch that isn't there.
+ */
+export function describeCaptureFailure(error: unknown): string {
+  if (error instanceof WholeScreenRequired) {
+    return 'Share your whole screen, not a single tab or window, then try again.'
+  }
+  const name = (error as { name?: string } | null)?.name ?? ''
+  switch (name) {
+    case 'NotAllowedError':
+      return 'Screen sharing was refused. If no window appeared at all, your computer is blocking it: on a Mac, allow Chrome under System Settings \u2192 Privacy & Security \u2192 Screen Recording, then restart Chrome.'
+    case 'NotFoundError':
+      return 'No screen was available to share. If you are using an external monitor, try disconnecting and reconnecting it.'
+    case 'NotReadableError':
+      return 'Your computer would not hand over the screen. Close any other app that is recording or sharing, then try again.'
+    case 'AbortError':
+      return 'Screen sharing stopped before it started. Try again.'
+    default:
+      return 'Screen sharing could not start. Try again, or use Chrome or Edge on a computer.'
   }
 }
 

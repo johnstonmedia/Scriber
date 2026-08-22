@@ -4,6 +4,7 @@ import { useReveal, useScrollProgress, useScrollY } from '../lib/useReveal'
 import { HomeDemo } from '../components/HomeDemo'
 import { HeroScene } from '../components/HeroScene'
 import { BrandMark } from '../components/BrandMark'
+import type { SiteContent } from '../lib/siteConfig'
 
 function Reveal({ children, className = '', delay = 0 }: { children: ReactNode; className?: string; delay?: number }) {
   const { ref, visible } = useReveal<HTMLDivElement>()
@@ -45,7 +46,7 @@ function CascadeHeading({ text, className = '' }: { text: string; className?: st
   )
 }
 
-export function Home() {
+export function Home({ content }: { content: SiteContent }) {
   const scrollY = useScrollY()
   const progress = useScrollProgress()
 
@@ -79,16 +80,11 @@ export function Home() {
         </div>
         <div className="home-hero-content">
           <span className="badge badge-accent home-eyebrow">For NESA exam writer provisions</span>
-          <CascadeHeading className="home-h1" text="Practise with a writer before the exam room does." />
-          <p className="home-lede">
-            Scriber acts as your writer. It writes exactly what you say — nothing more — and it
-            behaves like a real person: a beat of lag, a limited memory, and the occasional
-            &ldquo;how do you spell that?&rdquo; It's the only way to practise the pace an exam
-            actually demands.
-          </p>
+          <CascadeHeading className="home-h1" text={content.heroTitle} />
+          <p className="home-lede">{content.heroBody}</p>
           <div className="row gap-3 wrap" style={{ marginTop: 8 }}>
             <Link to="/login" className="btn btn-primary btn-lg">
-              Start practising free
+              {content.ctaLabel}
             </Link>
             <a href="#how" className="btn btn-lg">
               See how it works

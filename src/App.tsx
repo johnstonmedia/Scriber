@@ -10,6 +10,7 @@ import {
 } from 'react-router-dom'
 import { AuthProvider, useAuth } from './lib/auth'
 import { useHostRedirect } from './lib/useHostRedirect'
+import { hostKind, type HostOrg } from './lib/hostOrg'
 import { Home } from './pages/Home'
 import { SignIn } from './pages/SignIn'
 import { Welcome } from './pages/Welcome'
@@ -37,13 +38,29 @@ function useTheme() {
   return { theme, toggle: () => setTheme((t) => (t === 'light' ? 'dark' : 'light')) }
 }
 
-function TopBar() {
+/**
+ * On a school's own subdomain the bar carries both marks: the school's,
+ * because this address is theirs, and Scriber's, because the tool is not.
+ * A student should never be unclear about which they are looking at, and a
+ * school should never look like it built this.
+ */
+function TopBar({ host }: { host: HostOrg | null }) {
   const { user, memberships, pendingInvites, siteAdmin, signOut } = useAuth()
   const { theme, toggle } = useTheme()
   const navigate = useNavigate()
 
   return (
-    <header className="topbar no-print">
+    <header
+      className="topbar no-print"
+      style={host ? { borderBottomColor: host.branding.accentColor } : undefined}
+    >
+      {host && (
+        <span className="host-brand">
+          {host.branding.logoDataUrl && <img src={host.branding.logoDataUrl} alt="" />}
+          <span className="host-brand-name">{host.name}</span>
+          <span className="host-brand-sep" aria-hidden="true" />
+        </span>
+      )}
       <NavLink to="/" className="brand">
         <BrandLockup />
       </NavLink>
@@ -104,6 +121,7 @@ function Shell() {
   const location = useLocation()
   const [siteConfig, setSiteConfig] = useState(DEFAULT_SITE_CONFIG)
   const host = useHostRedirect()
+  const kind = hostKind()
 
   useEffect(() => subscribeSiteConfig(setSiteConfig), [])
 
@@ -125,9 +143,10 @@ function Shell() {
     )
   }
 
-  // Locked, the whole platform is a holding page — except for a signed-in
-  // site admin, who works on it exactly as normal. /login stays reachable so
-  // there's still a way in.
+  // Locked, nobody but a signed-in site admin gets past the holding page —
+  // and they work on it exactly as normal, since otherwise locking the site
+  // would lock out the only person who can unlock it. /login stays reachable
+  // so there is still a way in.
   if (siteConfig.locked && !siteAdmin) {
     return (
       <Routes>
@@ -141,7 +160,17 @@ function Shell() {
     return (
       <Routes>
         <Route path="/login" element={<SignIn />} />
-        <Route path="*" element={<Home />} />
+        {/*
+          The public site explains Scriber to somebody who has never seen it,
+          and only the public address has anyone to explain it to. On app. or
+          a school's own subdomain an anonymous visitor came here to sign in,
+          so send them there rather than selling to them.
+        */}
+        {kind === 'marketing' ? (
+          <Route path="*" element={<Home content={siteConfig.content} />} />
+        ) : (
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        )}
       </Routes>
     )
   }
@@ -170,7 +199,12 @@ function Shell() {
 
   return (
     <div className="app-shell">
-      {!bare && <TopBar />}
+      {/* A notice the site admin set — outages, term dates. Never in the exam
+          room, where nothing may compete with the paper. */}
+      {siteConfig.content.banner && !bare && (
+        <div className="site-banner no-print">{siteConfig.content.banner}</div>
+      )}
+      {!bare && <TopBar host={host.org} />}
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/welcome" element={<Welcome />} />

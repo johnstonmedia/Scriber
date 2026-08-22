@@ -10,7 +10,14 @@ import {
   revokeOrgCreator,
   type OrganisationSummary,
 } from '../lib/siteAdmin'
-import { DEFAULT_SITE_CONFIG, setSiteLock, subscribeSiteConfig } from '../lib/siteConfig'
+import {
+  DEFAULT_SITE_CONFIG,
+  setSiteContent,
+  setSiteLock,
+  subscribeSiteConfig,
+  type SiteContent,
+} from '../lib/siteConfig'
+import { rootDomain } from '../lib/hostOrg'
 
 /**
  * Platform-wide oversight — organisations and accounts, never content. There
@@ -71,6 +78,7 @@ export function SiteAdmin() {
       {notice && <div className="alert alert-info" style={{ marginBottom: 16 }}>{notice}</div>}
 
       <SiteLockPanel />
+      <SiteContentEditor />
 
       <section className="card card-pad stack gap-3" style={{ marginBottom: 24, maxWidth: 480 }}>
         <h2>Look up an account</h2>
@@ -226,8 +234,10 @@ function SiteLockPanel() {
         </span>
       </div>
       <p className="small muted">
-        Locked, everyone sees a coming-soon page. You keep full access while signed in as a site
-        admin.
+        Locked, the public site becomes a coming-soon page and nobody can reach the app at
+        all — not students, not schools, not staff. You keep full access while signed in as a
+        site admin, since otherwise locking the site would lock out the only person who can
+        unlock it.
       </p>
       <div className="field">
         <label htmlFor="lockMessage">What visitors see</label>
@@ -257,6 +267,116 @@ function SiteLockPanel() {
       >
         {config.locked ? 'Unlock the site' : 'Lock the site'}
       </button>
+    </section>
+  )
+}
+
+
+/**
+ * The words on the public site, editable without a deploy.
+ *
+ * These are the things most likely to want changing on a Tuesday afternoon —
+ * a headline that isn't landing, a notice about a maintenance window — and
+ * none of them are worth a release. Anything structural still lives in the
+ * source.
+ */
+function SiteContentEditor() {
+  const [config, setConfig] = useState(DEFAULT_SITE_CONFIG)
+  const [draft, setDraft] = useState<SiteContent | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => subscribeSiteConfig(setConfig), [])
+
+  // Only adopt what's live until the admin starts typing — otherwise a
+  // snapshot landing mid-edit would wipe what they were writing.
+  const value = draft ?? config.content
+  const edit = (patch: Partial<SiteContent>) => {
+    setSaved(false)
+    setDraft({ ...value, ...patch })
+  }
+
+  return (
+    <section className="card card-pad stack gap-3" style={{ marginBottom: 24, maxWidth: 620 }}>
+      <div>
+        <h2 style={{ margin: 0 }}>Public site</h2>
+        <p className="small muted" style={{ marginTop: 6 }}>
+          What people see at {rootDomain()} before they sign in. Saved changes appear
+          immediately — there is no deploy.
+        </p>
+      </div>
+
+      <div className="field">
+        <label htmlFor="scBanner">Notice bar</label>
+        <input
+          id="scBanner"
+          className="input"
+          placeholder="Leave blank for none"
+          value={value.banner}
+          onChange={(e) => edit({ banner: e.target.value })}
+        />
+        <p className="small muted" style={{ marginTop: 6 }}>
+          Shown across the top of every page, signed in or not. Use it for outages and term
+          dates, and clear it when it stops being true.
+        </p>
+      </div>
+
+      <div className="field">
+        <label htmlFor="scTitle">Headline</label>
+        <input
+          id="scTitle"
+          className="input"
+          value={value.heroTitle}
+          onChange={(e) => edit({ heroTitle: e.target.value })}
+        />
+      </div>
+
+      <div className="field">
+        <label htmlFor="scBody">Opening paragraph</label>
+        <textarea
+          id="scBody"
+          className="input"
+          rows={4}
+          value={value.heroBody}
+          onChange={(e) => edit({ heroBody: e.target.value })}
+        />
+      </div>
+
+      <div className="field" style={{ maxWidth: 260 }}>
+        <label htmlFor="scCta">Main button</label>
+        <input
+          id="scCta"
+          className="input"
+          value={value.ctaLabel}
+          onChange={(e) => edit({ ctaLabel: e.target.value })}
+        />
+      </div>
+
+      <div className="row gap-2">
+        <button
+          className="btn btn-primary"
+          disabled={busy || draft === null}
+          onClick={async () => {
+            if (!draft) return
+            setBusy(true)
+            try {
+              await setSiteContent(draft)
+              setDraft(null)
+              setSaved(true)
+            } finally {
+              setBusy(false)
+            }
+          }}
+        >
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+        {draft !== null && (
+          <button className="btn btn-ghost" onClick={() => setDraft(null)} disabled={busy}>
+            Discard
+          </button>
+        )}
+        {saved && <span className="small muted" style={{ alignSelf: 'center' }}>Saved.</span>}
+      </div>
     </section>
   )
 }

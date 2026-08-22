@@ -1549,3 +1549,56 @@ textarea.input {
   .print-cover-meta { font-size: 11pt; line-height: 1.7; }
   .print-cover-meta strong { font-size: 13pt; }
 }
+
+/* ------------------------------------------------------- platform notices */
+
+/*
+ * A notice a site admin set. Deliberately plain and full-width: it is meant
+ * to be read once and then stop being true, not to become furniture.
+ */
+.site-banner {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  border-bottom: 1px solid var(--line);
+  padding: 9px 20px;
+  font-size: 0.88rem;
+  text-align: center;
+}
+
+/* ------------------------------------------- a school's own address */
+
+/*
+ * On stpauls.pracscriber.com the bar carries the school first, then Scriber.
+ * That order is the point: the address is theirs, the tool is ours, and a
+ * student should never be confused about which is which.
+ */
+.host-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.host-brand img { height: 26px; width: auto; display: block; }
+.host-brand-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 22ch;
+}
+.host-brand-sep {
+  width: 1px;
+  height: 22px;
+  background: var(--line-strong);
+  margin: 0 2px;
+}
+
+/* The school's colour is an accent on the bar, never a replacement for the
+   product's own — Scriber's blue still marks every action. */
+.topbar { border-bottom-width: 2px; }
+
+@media (max-width: 720px) {
+  .host-brand-name { display: none; }
+}

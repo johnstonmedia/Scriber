@@ -16,6 +16,22 @@
 import { signInWithCustomToken } from 'firebase/auth'
 import { auth } from './firebase'
 
+/**
+ * What this address is for.
+ *
+ *   marketing  pracscriber.com — the public site. Explains Scriber to
+ *              somebody who has never seen it.
+ *   app        app.pracscriber.com — the product itself, for people with no
+ *              school. There is nothing to explain here; an anonymous visitor
+ *              wants the sign-in page, not a pitch.
+ *   org        stpauls.pracscriber.com — the product wearing a school's
+ *              colours alongside Scriber's own.
+ *
+ * Local development has no subdomains, so it is 'marketing' and every route
+ * stays reachable — which is also what keeps the end-to-end suite working.
+ */
+export type HostKind = 'marketing' | 'app' | 'org'
+
 export type HostOrg = {
   id: string
   slug: string
@@ -43,6 +59,26 @@ export function rootDomain(): string {
 
 export const orgUrl = (slug: string) => `https://${slug}.${rootDomain()}`
 export const appUrl = () => `https://app.${rootDomain()}`
+export const marketingUrl = () => `https://${rootDomain()}`
+
+/** The leftmost label, or null when the address has no subdomain to read. */
+function subdomainLabel(): string | null {
+  if (!subdomainsAvailable()) return null
+  const labels = window.location.hostname.toLowerCase().split('.')
+  return labels.length >= 3 ? labels[0]! : null
+}
+
+/**
+ * Decided from the address alone, so it is known before any network call —
+ * routing cannot wait on Firestore to find out whether to show a sign-in page
+ * or a sales pitch.
+ */
+export function hostKind(): HostKind {
+  const label = subdomainLabel()
+  if (label === null) return 'marketing'
+  if (label === 'app' || label === 'www') return 'app'
+  return 'org'
+}
 
 let pending: Promise<HostOrg | null> | undefined
 

@@ -5,10 +5,13 @@ import {
   acceptInvite,
   createOrganisation,
   listOrganisationDirectory,
+  normaliseSlug,
   requestToJoin,
+  setOrgSlug,
   withdrawJoinRequest,
   type Organisation,
 } from '../lib/org'
+import { rootDomain } from '../lib/hostOrg'
 
 /**
  * Where a signed-in user finds organisations: the ones they already belong
@@ -27,6 +30,9 @@ export function Organisations() {
   const [busy, setBusy] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [name, setName] = useState('')
+  const [slug, setSlug] = useState('')
+  const [slugTouched, setSlugTouched] = useState(false)
   const [requested, setRequested] = useState<Set<string>>(new Set())
 
   const myOrgIds = new Set(memberships.map((m) => m.orgId))
@@ -97,10 +103,22 @@ export function Organisations() {
     const form = new FormData(event.currentTarget)
     const name = String(form.get('name') ?? '').trim()
     if (!name) return
+    const wanted = String(form.get('slug') ?? '').trim() || name
     setCreating(true)
     setError(null)
     try {
       const org = await createOrganisation(user.uid, { email: user.email, name: user.name }, name)
+      // Claimed after creation rather than as part of it: uniqueness lives in
+      // its own collection, and a subdomain somebody else already holds
+      // should not cost you the organisation you just made. It can be changed
+      // later in Settings either way.
+      await setOrgSlug(org.id, wanted).catch((err) => {
+        setError(
+          err instanceof Error
+            ? `${org.name} was created, but its web address wasn't: ${err.message}`
+            : 'The organisation was created without a web address.',
+        )
+      })
       await refreshMemberships()
       navigate(`/organisations/${org.id}`)
     } catch (err) {
@@ -154,7 +172,42 @@ export function Organisations() {
           </p>
           <div className="field" style={{ maxWidth: 360 }}>
             <label htmlFor="orgName">Organisation name</label>
-            <input id="orgName" name="name" className="input" placeholder="Northside High School" required />
+            <input
+              id="orgName"
+              name="name"
+              className="input"
+              placeholder="Northside High School"
+              required
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value)
+                // Follow the name until the admin edits the address itself,
+                // then leave theirs alone.
+                if (!slugTouched) setSlug(normaliseSlug(e.target.value) ?? '')
+              }}
+            />
+          </div>
+          <div className="field" style={{ maxWidth: 360 }}>
+            <label htmlFor="orgSlug">Web address</label>
+            <div className="row gap-2" style={{ alignItems: 'center' }}>
+              <input
+                id="orgSlug"
+                name="slug"
+                className="input"
+                placeholder="northside"
+                value={slug}
+                onChange={(e) => {
+                  setSlugTouched(true)
+                  setSlug(e.target.value)
+                }}
+                style={{ maxWidth: 190 }}
+              />
+              <span className="small muted">.{rootDomain()}</span>
+            </div>
+            <p className="small muted" style={{ marginTop: 6 }}>
+              Your school's own address. Anyone who belongs here is taken to it automatically when
+              they sign in; anyone who doesn't is sent back to the main site.
+            </p>
           </div>
           <div className="row gap-2">
             <button className="btn btn-primary" disabled={creating}>

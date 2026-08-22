@@ -24,6 +24,8 @@ import { OrganisationConsole } from './pages/OrganisationConsole'
 import { TestMonitor } from './pages/TestMonitor'
 import { SiteAdmin } from './pages/SiteAdmin'
 import { ComingSoon } from './pages/ComingSoon'
+import { Privacy } from './pages/Privacy'
+import { ExtensionPrompt } from './components/ExtensionPrompt'
 import { DEFAULT_SITE_CONFIG, subscribeSiteConfig } from './lib/siteConfig'
 import { BrandLockup } from './components/BrandMark'
 
@@ -151,6 +153,7 @@ function Shell() {
     return (
       <Routes>
         <Route path="/login" element={<SignIn />} />
+        <Route path="/privacy" element={<Privacy />} />
         <Route path="*" element={<ComingSoon message={siteConfig.message} />} />
       </Routes>
     )
@@ -160,6 +163,7 @@ function Shell() {
     return (
       <Routes>
         <Route path="/login" element={<SignIn />} />
+        <Route path="/privacy" element={<Privacy />} />
         {/*
           The public site explains Scriber to somebody who has never seen it,
           and only the public address has anyone to explain it to. On app. or
@@ -205,7 +209,9 @@ function Shell() {
         <div className="site-banner no-print">{siteConfig.content.banner}</div>
       )}
       {!bare && <TopBar host={host.org} />}
+      {!bare && <ExtensionPrompt />}
       <Routes>
+        <Route path="/privacy" element={<Privacy />} />
         <Route path="/" element={<Dashboard />} />
         <Route path="/welcome" element={<Welcome />} />
         <Route path="/exam" element={<ExamRoom />} />

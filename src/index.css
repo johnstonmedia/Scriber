@@ -1602,3 +1602,105 @@ textarea.input {
 @media (max-width: 720px) {
   .host-brand-name { display: none; }
 }
+
+/* ------------------------------------------------------------ legal pages */
+
+/*
+ * Set for reading rather than for scanning: one column, generous measure, and
+ * the page's own serif — this is a document, not an interface.
+ */
+.legal-page { min-height: 100vh; background: var(--paper); }
+.legal-head {
+  padding: 22px 28px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.legal-body {
+  max-width: 68ch;
+  margin: 0 auto;
+  padding: 52px 28px 100px;
+}
+.legal-body h1 {
+  font-size: clamp(2rem, 4.5vw, 2.7rem);
+  margin-bottom: 18px;
+}
+.legal-body h2 {
+  margin: 44px 0 10px;
+  font-size: 1.45rem;
+}
+.legal-body h3 {
+  margin: 26px 0 8px;
+  font-size: 1rem;
+  color: var(--ink);
+}
+.legal-body p { margin-bottom: 15px; color: var(--ink-soft); line-height: 1.72; }
+.legal-lede {
+  font-family: var(--font-display);
+  font-size: 1.16rem;
+  line-height: 1.6;
+  color: var(--ink) !important;
+}
+.legal-meta { font-size: 0.85rem; color: var(--ink-faint) !important; }
+.legal-body ul { color: var(--ink-soft); padding-left: 22px; margin: 0 0 15px; line-height: 1.72; }
+.legal-body li { margin-bottom: 8px; }
+.legal-foot {
+  margin-top: 48px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  font-size: 0.88rem;
+  color: var(--ink-faint) !important;
+}
+
+.legal-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 18px 0 8px;
+  font-size: 0.95rem;
+}
+.legal-table th {
+  text-align: left;
+  vertical-align: top;
+  width: 34%;
+  padding: 12px 16px 12px 0;
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+}
+.legal-table td {
+  padding: 12px 0;
+  color: var(--ink-soft);
+  border-bottom: 1px solid var(--line);
+  line-height: 1.65;
+}
+@media (max-width: 620px) {
+  .legal-table, .legal-table tbody, .legal-table tr, .legal-table th, .legal-table td { display: block; width: auto; }
+  .legal-table th { border-bottom: 0; padding-bottom: 2px; }
+  .legal-table td { padding-top: 0; }
+}
+
+/* ------------------------------------------ the extension, before it's needed */
+
+/*
+ * Asking once, visibly, rather than repeatedly and quietly. A student who
+ * dismisses this is told again when a test is actually scheduled, which is
+ * the moment it stops being advice and starts being a requirement.
+ */
+.extension-prompt {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 14px 20px;
+  background: var(--warn-soft);
+  border-bottom: 1px solid var(--line);
+}
+.extension-prompt-body { flex: 1 1 340px; min-width: 0; }
+.extension-prompt-body strong { display: block; font-size: 0.95rem; color: var(--ink); }
+.extension-prompt-body p {
+  margin: 3px 0 0;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  line-height: 1.55;
+  max-width: 78ch;
+}
+.extension-prompt-actions { display: flex; gap: 8px; flex-wrap: wrap; flex: none; }

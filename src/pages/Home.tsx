@@ -199,6 +199,9 @@ export function Home({ content }: { content: SiteContent }) {
           Scriber is an independent practice tool. It is not affiliated with or endorsed by NESA,
           and it does not replace the writer you are approved to work with in the exam.
         </p>
+        <p className="tiny">
+          <Link to="/privacy">Privacy</Link>
+        </p>
       </footer>
     </div>
   )

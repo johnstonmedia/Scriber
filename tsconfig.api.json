@@ -9,6 +9,9 @@
 
     "module": "esnext",
     "moduleResolution": "bundler",
+    /* Tests import the module under test directly; routes use .js specifiers
+       because Vercel compiles them as real ES modules. */
+    "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,

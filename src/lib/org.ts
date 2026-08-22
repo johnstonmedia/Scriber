@@ -41,9 +41,22 @@ export type Organisation = {
   name: string
   createdAt: string
   createdBy: string
+  /**
+   * This school's own subdomain label — stpauls in stpauls.pracscriber.com.
+   * Null until an admin claims one. Uniqueness is held by the orgSlugs
+   * collection, not by this field.
+   */
+  slug: string | null
   settings: {
     defaultRuleProfile: 'strict' | 'assisted'
     allowJoinRequests: boolean
+    /**
+     * What goes at the top of a printed answer. Senior exams are marked
+     * anonymously against an exam number, so that a marker holding a stack of
+     * papers has nothing to identify the student by; younger years generally
+     * hand back by name instead.
+     */
+    identifyBy: 'examNumber' | 'name'
   }
   /**
    * Shown to students on this org's own page and in a live test. No Storage
@@ -70,6 +83,12 @@ export type Membership = {
   status: 'active'
   classIds: string[]
   joinedAt: string
+  /**
+   * The number this student sits exams under. Set by staff — a student can
+   * never set or change their own, since the whole point is that it ties a
+   * paper to them without naming them.
+   */
+  examNumber: string | null
 }
 
 export type Invite = {
@@ -80,6 +99,13 @@ export type Invite = {
   status: 'pending' | 'accepted'
   /** Set when a teacher invites straight into one of their classes — folded into acceptance. */
   classId: string | null
+  /**
+   * The exam number this student will sit under, set at invite time so it is
+   * in place before their first test. Security rules pin the membership's
+   * number to this one, so a student can't accept an invite under a number
+   * of their own choosing.
+   */
+  examNumber: string | null
 }
 
 export type OrgDomain = {
@@ -158,9 +184,11 @@ function toOrganisation(snapshot: QueryDocumentSnapshot<DocumentData>): Organisa
     name: String(data.name ?? 'Untitled organisation'),
     createdAt: isoOf(data.createdAt),
     createdBy: String(data.createdBy ?? ''),
+    slug: typeof data.slug === 'string' && data.slug ? data.slug : null,
     settings: {
       defaultRuleProfile: data.settings?.defaultRuleProfile === 'assisted' ? 'assisted' : 'strict',
       allowJoinRequests: data.settings?.allowJoinRequests !== false,
+      identifyBy: data.settings?.identifyBy === 'name' ? 'name' : 'examNumber',
     },
     branding: {
       accentColor: typeof data.branding?.accentColor === 'string' ? data.branding.accentColor : '#4f7cff',
@@ -182,6 +210,7 @@ function toMembership(snapshot: QueryDocumentSnapshot<DocumentData>, orgId?: str
     status: 'active',
     classIds: Array.isArray(data.classIds) ? data.classIds : [],
     joinedAt: isoOf(data.joinedAt),
+    examNumber: typeof data.examNumber === 'string' && data.examNumber ? data.examNumber : null,
   }
 }
 
@@ -194,6 +223,7 @@ function toInvite(snapshot: QueryDocumentSnapshot<DocumentData>): Invite {
     createdAt: isoOf(data.createdAt),
     status: data.status === 'accepted' ? 'accepted' : 'pending',
     classId: typeof data.classId === 'string' ? data.classId : null,
+    examNumber: typeof data.examNumber === 'string' && data.examNumber ? data.examNumber : null,
   }
 }
 
@@ -289,8 +319,9 @@ export async function createOrganisation(
     name: name.trim(),
     createdBy: uid,
     createdAt: serverTimestamp(),
-    settings: { defaultRuleProfile: 'strict', allowJoinRequests: true },
-    branding: { accentColor: '#4f7cff', tagline: '', logoDataUrl: null },
+    slug: null,
+    settings: { defaultRuleProfile: 'strict', allowJoinRequests: true, identifyBy: 'examNumber' },
+    branding: { accentColor: '#1F5FD8', tagline: '', logoDataUrl: null },
   })
   try {
     await setDoc(doc(membersRef(org.id), uid), {
@@ -348,6 +379,74 @@ export async function updateOrganisation(
   }
   if (Object.keys(patch).length === 0) return
   await updateDoc(orgDoc(orgId), patch)
+}
+
+/**
+ * Subdomain labels the platform keeps for itself. Mirrors the list the
+ * backend enforces in api/_lib/host.ts — a school able to claim "api" or
+ * "admin" could dress itself up as Scriber. Checked here too so an admin is
+ * told no immediately rather than after a failed write.
+ */
+const RESERVED_SLUGS = new Set([
+  'app', 'www', 'api', 'admin', 'help', 'support', 'status', 'mail', 'staging', 'preview', 'dev', 'test',
+])
+
+/** Turns what an admin typed into a label that will survive as a hostname. */
+export function normaliseSlug(input: string): string | null {
+  const slug = input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 63)
+    .replace(/-+$/g, '')
+  if (slug.length < 2) return null
+  if (RESERVED_SLUGS.has(slug)) return null
+  return /^[a-z0-9][a-z0-9-]*$/.test(slug) ? slug : null
+}
+
+/**
+ * Claims a subdomain for an organisation, releasing whatever it held before.
+ *
+ * Uniqueness lives in orgSlugs/{slug} rather than in a field on the org: a
+ * document ID is the only thing Firestore can make unique across a
+ * collection, so claiming one is a create that fails if somebody already
+ * holds it. Passing null releases the current slug and claims nothing.
+ */
+export async function setOrgSlug(orgId: string, requested: string | null): Promise<string | null> {
+  const current = (await getDoc(orgDoc(orgId))).get('slug') as string | undefined
+
+  if (requested === null) {
+    if (current) await deleteDoc(doc(db, 'orgSlugs', current))
+    await updateDoc(orgDoc(orgId), { slug: null })
+    return null
+  }
+
+  const slug = normaliseSlug(requested)
+  if (!slug) {
+    throw new Error('Use letters and numbers — at least two, and not a name Scriber reserves.')
+  }
+  if (slug === current) return slug
+
+  const claim = doc(db, 'orgSlugs', slug)
+  if ((await getDoc(claim)).exists()) {
+    throw new Error(`${slug} is already taken by another organisation.`)
+  }
+
+  await setDoc(claim, { orgId, claimedAt: serverTimestamp() })
+  try {
+    await updateDoc(orgDoc(orgId), { slug })
+  } catch (error) {
+    await deleteDoc(claim)
+    throw error
+  }
+  if (current) await deleteDoc(doc(db, 'orgSlugs', current)).catch(() => undefined)
+  return slug
+}
+
+/** Staff assigning the number a student sits exams under. Never the student. */
+export async function setExamNumber(orgId: string, uid: string, examNumber: string | null): Promise<void> {
+  await updateDoc(doc(membersRef(orgId), uid), { examNumber: examNumber?.trim() || null })
 }
 
 /**
@@ -417,6 +516,8 @@ export async function inviteMember(
   invitedBy: string,
   /** Set when a teacher invites straight from a class — folded in on acceptance. */
   classId?: string,
+  /** Assigned now so it is in place before the student's first test. */
+  examNumber?: string | null,
 ): Promise<void> {
   await setDoc(doc(invitesRef(orgId), normaliseEmail(email)), {
     email: normaliseEmail(email),
@@ -425,6 +526,7 @@ export async function inviteMember(
     createdAt: serverTimestamp(),
     status: 'pending',
     classId: classId ?? null,
+    examNumber: examNumber?.trim() || null,
   })
 }
 
@@ -469,6 +571,8 @@ export async function acceptInvite(
   }
   const role = invite.data().role as OrgRole
   const classId = typeof invite.data().classId === 'string' ? (invite.data().classId as string) : null
+  // Rules require this to match the invite exactly — see firestore.rules.
+  const examNumber = typeof invite.data().examNumber === 'string' ? (invite.data().examNumber as string) : null
   const org = await getOrganisation(orgId)
 
   const batch = writeBatch(db)
@@ -481,6 +585,7 @@ export async function acceptInvite(
     status: 'active',
     classIds: [],
     joinedAt: serverTimestamp(),
+    examNumber,
   })
   batch.update(doc(invitesRef(orgId), normaliseEmail(profile.email)), { status: 'accepted' })
   await batch.commit()

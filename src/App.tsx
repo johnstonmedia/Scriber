@@ -9,6 +9,7 @@ import {
   useNavigate,
 } from 'react-router-dom'
 import { AuthProvider, useAuth } from './lib/auth'
+import { useHostRedirect } from './lib/useHostRedirect'
 import { Home } from './pages/Home'
 import { SignIn } from './pages/SignIn'
 import { Welcome } from './pages/Welcome'
@@ -102,10 +103,21 @@ function Shell() {
   const { user, loading, onboarded, pendingInvites, siteAdmin } = useAuth()
   const location = useLocation()
   const [siteConfig, setSiteConfig] = useState(DEFAULT_SITE_CONFIG)
+  const host = useHostRedirect()
 
   useEffect(() => subscribeSiteConfig(setSiteConfig), [])
 
-  if (loading) {
+  // Mid-hop to another subdomain. Saying where they're going matters: the
+  // address bar is about to change to one they may not recognise.
+  if (host.leavingFor) {
+    return (
+      <div style={{ display: 'grid', placeItems: 'center', height: '100vh' }} className="muted">
+        Taking you to {host.leavingFor}…
+      </div>
+    )
+  }
+
+  if (loading || host.org === undefined) {
     return (
       <div style={{ display: 'grid', placeItems: 'center', height: '100vh' }} className="muted">
         Loading Scriber…

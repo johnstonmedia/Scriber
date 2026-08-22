@@ -18,6 +18,7 @@ import {
   listOrgPapers,
   removeStudentFromClass,
   setClassQuestions,
+  setExamNumber,
   type Invite,
   type JoinRequest,
   type Membership,
@@ -489,6 +490,11 @@ export function ClassCard({
       {students.map((s) => (
         <div className="row gap-2" key={s.uid}>
           <span className="grow small">{s.name}</span>
+          {canManage ? (
+            <ExamNumberField orgId={orgId} member={s} onChange={onChange} />
+          ) : (
+            s.examNumber && <span className="badge">{s.examNumber}</span>
+          )}
           {canManage && (
             <button
               className="btn btn-sm btn-ghost"
@@ -520,11 +526,13 @@ export function ClassCard({
           className="row gap-2"
           onSubmit={(e) => {
             e.preventDefault()
-            const form = new FormData(e.currentTarget)
+            const formEl = e.currentTarget
+            const form = new FormData(formEl)
             const email = String(form.get('email') ?? '').trim()
+            const examNumber = String(form.get('examNumber') ?? '').trim() || null
             if (!email) return
-            void inviteMember(orgId, email, 'student', currentUid, orgClass.id).then(() => {
-              e.currentTarget.reset()
+            void inviteMember(orgId, email, 'student', currentUid, orgClass.id, examNumber).then(() => {
+              formEl.reset()
               setInviteNotice(`Invited ${email} — they'll join this class once they sign up and verify their email.`)
             })
           }}
@@ -536,10 +544,67 @@ export function ClassCard({
             placeholder="Not on Scriber yet? Invite by email"
             required
           />
+          <input
+            className="input"
+            name="examNumber"
+            placeholder="Exam no."
+            aria-label="Exam number"
+            style={{ maxWidth: 110 }}
+          />
           <button className="btn btn-sm btn-primary">Invite</button>
         </form>
       )}
       {inviteNotice && <p className="small muted">{inviteNotice}</p>}
     </article>
+  )
+}
+
+
+/**
+ * A student's exam number, edited in place.
+ *
+ * Staff set this and students never can — an exam number exists so a marker
+ * can identify a paper without being told whose it is, which a student able
+ * to choose their own would defeat. firestore.rules enforces that; this is
+ * only the way in for the people who are allowed.
+ */
+function ExamNumberField({
+  orgId,
+  member,
+  onChange,
+}: {
+  orgId: string
+  member: Membership
+  onChange: () => void
+}) {
+  const [value, setValue] = useState(member.examNumber ?? '')
+  const [saving, setSaving] = useState(false)
+
+  async function commit() {
+    const next = value.trim() || null
+    if (next === member.examNumber) return
+    setSaving(true)
+    try {
+      await setExamNumber(orgId, member.uid, next)
+      onChange()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <input
+      className="input"
+      value={value}
+      disabled={saving}
+      placeholder="Exam no."
+      aria-label={`Exam number for ${member.name}`}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={() => void commit()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur()
+      }}
+      style={{ maxWidth: 110, fontSize: '0.85rem', padding: '4px 8px' }}
+    />
   )
 }

@@ -139,6 +139,22 @@ service cloud.firestore {
       allow update, delete: if isOrgAdmin(resource.data.orgId);
     }
 
+    // Which school owns which subdomain: stpauls.pracscriber.com. The
+    // document ID *is* the slug, because a document ID is the only thing
+    // Firestore makes unique across a collection — claiming a subdomain is
+    // therefore a create that fails when somebody already holds it, which is
+    // exactly the guarantee wanted. There is no update: a school changing
+    // its subdomain releases the old one and claims the new.
+    //
+    // The public sign-in page resolves subdomains through the backend (which
+    // uses the Admin SDK and bypasses these rules), so nothing here needs to
+    // be readable before sign-in.
+    match /orgSlugs/{slug} {
+      allow read: if isSignedIn();
+      allow create: if isOrgAdmin(request.resource.data.orgId);
+      allow delete: if isOrgAdmin(resource.data.orgId);
+    }
+
     // ---------------------------------------------- collection-group queries
     //
     // Nested match blocks (below, under organisations/{orgId}) govern get and
@@ -187,6 +203,12 @@ service cloud.firestore {
         // hand, role changes, removals.
         allow write: if isOrgAdmin(orgId);
 
+        // A teacher runs their own classes and knows their students' exam
+        // numbers, so they may set those two things and nothing else — not
+        // roles, not status, not somebody's email.
+        allow update: if isOrgTeacher(orgId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['examNumber', 'classIds']);
+
         // Bootstrapping: whoever created the organisation may create their
         // own membership as its first admin — isOrgAdmin() can't grant this
         // itself, since no membership exists yet for anyone to check. Email
@@ -206,7 +228,12 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/organisations/$(orgId)/invites/$(request.auth.token.email.lower())).data.status == 'pending'
           && request.resource.data.role == get(/databases/$(database)/documents/organisations/$(orgId)/invites/$(request.auth.token.email.lower())).data.role
           && request.resource.data.role in ['student', 'teacher']
-          && request.resource.data.status == 'active';
+          && request.resource.data.status == 'active'
+          // An exam number identifies a paper without naming its author, so a
+          // student setting their own would defeat it. They may only carry
+          // across the number the inviting teacher already put on the invite.
+          && request.resource.data.get('examNumber', null)
+             == get(/databases/$(database)/documents/organisations/$(orgId)/invites/$(request.auth.token.email.lower())).data.get('examNumber', null);
 
         // Domain auto-join: a verified email whose domain is registered to
         // this org may create their own membership directly, always as a
@@ -217,7 +244,10 @@ service cloud.firestore {
           && exists(/databases/$(database)/documents/orgDomains/$(emailDomain()))
           && get(/databases/$(database)/documents/orgDomains/$(emailDomain())).data.orgId == orgId
           && request.resource.data.role == 'student'
-          && request.resource.data.status == 'active';
+          && request.resource.data.status == 'active'
+          // Nobody arrives by domain match with an exam number of their own
+          // choosing; staff assign it afterwards.
+          && request.resource.data.get('examNumber', null) == null;
       }
 
       match /invites/{email} {

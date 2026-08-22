@@ -30,6 +30,31 @@ import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore'
 
 const PROJECT_ID = 'demo-scriber'
 
+/**
+ * Wipes the emulator before seeding.
+ *
+ * This script builds a specific world — these accounts, these organisations,
+ * these memberships — and asserts against it. Leftovers from an earlier run
+ * make it fail on account creation before it has checked a single rule, and
+ * that failure looks nothing like the real problem, so clear the slate first
+ * rather than requiring whoever runs it to remember to restart the emulator.
+ */
+async function resetEmulator() {
+  const responses = await Promise.all([
+    fetch(`http://127.0.0.1:8080/emulator/v1/projects/${PROJECT_ID}/databases/(default)/documents`, {
+      method: 'DELETE',
+    }),
+    fetch(`http://127.0.0.1:9099/emulator/v1/projects/${PROJECT_ID}/accounts`, { method: 'DELETE' }),
+  ]).catch(() => {
+    throw new Error('Could not reach the emulators — start them with `npm run emulators` first.')
+  })
+  for (const response of responses) {
+    if (!response.ok) throw new Error(`Could not clear the emulator: ${response.status}`)
+  }
+}
+
+await resetEmulator()
+
 const app = initializeApp({ apiKey: 'demo', projectId: PROJECT_ID, appId: 'demo' })
 const auth = getAuth(app)
 const db = getFirestore(app)
@@ -923,6 +948,60 @@ await allowed('anyone signed in can file a support report', async () => {
 await denied('a normal user cannot read the support queue', () =>
   getDocs(collection(db, 'supportReports')),
 )
+
+// ------------------------------------------- subdomains and exam numbers
+//
+// A school's subdomain is claimed by taking a document ID in orgSlugs, since
+// a document ID is the only thing Firestore makes unique across a collection.
+// An exam number identifies a paper without naming its author, so the one
+// person who must never be able to set it is the student it belongs to.
+
+await allowed("an org admin claims their school's subdomain", async () => {
+  await signInAs('orgadmin@school.test')
+  await setDoc(doc(db, 'orgSlugs', 'school-a'), { orgId: orgAId, claimedAt: new Date().toISOString() })
+})
+
+// Both rivalAdmin and outsider have been granted site admin by this point in
+// the script, and a site admin genuinely does administer every school —
+// subdomain included. The teacher and the student are the accounts that
+// still prove the boundary here: inside the school, but not running it.
+await denied("a teacher cannot claim their own school's subdomain", async () => {
+  await signInAs('teacher@school.test')
+  await setDoc(doc(db, 'orgSlugs', 'teacher-claim'), { orgId: orgAId, claimedAt: new Date().toISOString() })
+})
+
+await denied("a teacher cannot release their school's subdomain", async () => {
+  await signInAs('teacher@school.test')
+  await deleteDoc(doc(db, 'orgSlugs', 'school-a'))
+})
+
+await denied('a student cannot claim a subdomain at all', async () => {
+  await signInAs('student@school.test')
+  await setDoc(doc(db, 'orgSlugs', 'student-owned'), { orgId: orgAId, claimedAt: new Date().toISOString() })
+})
+
+await allowed('a teacher sets a student\'s exam number', async () => {
+  await signInAs('teacher@school.test')
+  await updateDoc(doc(db, 'organisations', orgAId, 'members', student.uid), { examNumber: '90210' })
+})
+
+await denied('a teacher cannot promote somebody while setting an exam number', async () => {
+  await signInAs('teacher@school.test')
+  await updateDoc(doc(db, 'organisations', orgAId, 'members', student.uid), {
+    examNumber: '90211',
+    role: 'admin',
+  })
+})
+
+await denied('a student cannot set their own exam number', async () => {
+  await signInAs('student@school.test')
+  await updateDoc(doc(db, 'organisations', orgAId, 'members', student.uid), { examNumber: '00001' })
+})
+
+await denied('a student cannot clear their own exam number', async () => {
+  await signInAs('student@school.test')
+  await updateDoc(doc(db, 'organisations', orgAId, 'members', student.uid), { examNumber: null })
+})
 
 await adminApp.delete()
 

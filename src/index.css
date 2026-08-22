@@ -1453,3 +1453,51 @@ textarea.input {
   color: var(--ink-soft);
   background: var(--surface-alt);
 }
+
+/* ------------------------------------------------------- the printed front sheet */
+
+/*
+ * Screen shows nothing of this; it exists only on paper. A marker working
+ * through a stack needs to identify a paper without being told whose it is,
+ * so the number is set large enough to read off the top of a pile.
+ */
+.print-cover { display: none; }
+
+@media print {
+  .print-cover {
+    display: block;
+    /* The answer starts on the next sheet, so the front is only ever this. */
+    page-break-after: always;
+    break-after: page;
+    padding-top: 12mm;
+  }
+
+  .print-cover-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 11pt;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border-bottom: 1px solid #000;
+    padding-bottom: 8px;
+  }
+  .print-cover-head img { height: 22px; width: auto; }
+
+  .print-cover-id { margin: 34mm 0 30mm; }
+  .print-cover-label {
+    font-size: 10pt;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .print-cover-value {
+    font-size: 42pt;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    line-height: 1.1;
+    margin-top: 4mm;
+  }
+
+  .print-cover-meta { font-size: 11pt; line-height: 1.7; }
+  .print-cover-meta strong { font-size: 13pt; }
+}

@@ -5,6 +5,7 @@ import { deleteAttempt, getAttempt, type Attempt } from '../lib/data'
 import { readAloud } from '../scribe/speech'
 import { buildInsights, paragraphsOf, type Atom, type ScribeStats } from '../scribe/engine'
 import { RULE_PROFILES } from '../lib/ruleProfile'
+import { PrintCover } from '../components/PrintCover'
 
 type LogEntry = { at: number; heard: string; commands: string[] }
 
@@ -105,6 +106,8 @@ export function SessionReview() {
 
   return (
     <div className="page">
+      <PrintCover attempt={attempt} />
+
       <div className="page-head">
         <div className="grow">
           <Link to="/" className="small">

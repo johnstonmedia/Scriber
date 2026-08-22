@@ -22,6 +22,7 @@ import {
 } from 'firebase/auth'
 import { doc, getDoc, setDoc } from 'firebase/firestore'
 import { auth, db, firebaseConfigured } from './firebase'
+import { consumeHandoff } from './hostOrg'
 import { listMyMemberships, listMyPendingInvites, type Membership, type PendingInvite } from './org'
 import { isSiteAdmin as checkSiteAdmin, canCreateOrg as checkCanCreateOrg } from './siteAdmin'
 import { clearFiles } from './fileStore'
@@ -190,6 +191,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!user) return
     await loadOrgState(user.uid, user.email)
   }, [user, loadOrgState])
+
+  // Arriving from another subdomain carries a one-off token in the fragment.
+  // Spending it before the listener below settles means the page resolves
+  // straight into a signed-in state, rather than flashing the sign-in screen
+  // to somebody who is already signed in next door.
+  useEffect(() => {
+    void consumeHandoff()
+  }, [])
 
   useEffect(() => {
     if (!firebaseConfigured) return

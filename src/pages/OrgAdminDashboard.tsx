@@ -9,6 +9,7 @@ import {
   resetMemberPassword,
   revokeInvite,
   updateMemberRole,
+  setOrgSlug,
   updateOrganisation,
   compressLogo,
   type Invite,
@@ -443,6 +444,9 @@ function OrgSettings({ orgId, org, user, actingAsSiteAdmin, navigate, refresh, r
   const [name, setName] = useState(org.name)
   const [ruleProfile, setRuleProfile] = useState(org.settings.defaultRuleProfile)
   const [allowJoinRequests, setAllowJoinRequests] = useState(org.settings.allowJoinRequests)
+  const [identifyBy, setIdentifyBy] = useState(org.settings.identifyBy)
+  const [slug, setSlug] = useState(org.slug ?? '')
+  const [slugError, setSlugError] = useState<string | null>(null)
   const [accentColor, setAccentColor] = useState(org.branding.accentColor)
   const [tagline, setTagline] = useState(org.branding.tagline)
   const [logoDataUrl, setLogoDataUrl] = useState(org.branding.logoDataUrl)
@@ -454,10 +458,23 @@ function OrgSettings({ orgId, org, user, actingAsSiteAdmin, navigate, refresh, r
     event.preventDefault()
     setSaving(true)
     setSaved(false)
+    setSlugError(null)
     try {
+      // The subdomain is claimed separately because uniqueness lives in its
+      // own collection — and if somebody else already holds it, the rest of
+      // the settings should still save rather than being lost to the error.
+      const wanted = slug.trim() ? slug.trim() : null
+      if (wanted !== (org.slug ?? null)) {
+        try {
+          const claimed = await setOrgSlug(orgId, wanted)
+          setSlug(claimed ?? '')
+        } catch (err) {
+          setSlugError(err instanceof Error ? err.message : 'Could not claim that address.')
+        }
+      }
       await updateOrganisation(orgId, {
         name,
-        settings: { defaultRuleProfile: ruleProfile, allowJoinRequests },
+        settings: { defaultRuleProfile: ruleProfile, allowJoinRequests, identifyBy },
         branding: { accentColor, tagline, logoDataUrl },
       })
       await refresh()
@@ -495,6 +512,51 @@ function OrgSettings({ orgId, org, user, actingAsSiteAdmin, navigate, refresh, r
           />
           List {org.name} in the directory and accept join requests
         </label>
+
+        <hr className="divider" />
+
+        <div className="field">
+          <label htmlFor="orgSlug">Web address</label>
+          <div className="row gap-2" style={{ alignItems: 'center' }}>
+            <input
+              id="orgSlug"
+              className="input"
+              value={slug}
+              placeholder="stpauls"
+              onChange={(e) => setSlug(e.target.value)}
+              style={{ maxWidth: 200 }}
+            />
+            <span className="small muted">.pracscriber.com</span>
+          </div>
+          <p className="small muted" style={{ marginTop: 6 }}>
+            Your own address. Staff and students who belong to {org.name} are taken here
+            automatically; anyone who doesn't is sent back to the main site. Leave it blank to
+            use the main site only.
+          </p>
+          {slugError && (
+            <p className="small" style={{ color: 'var(--live)' }}>
+              {slugError}
+            </p>
+          )}
+        </div>
+
+        <div className="field">
+          <label htmlFor="orgIdentifyBy">Printed answers are headed with</label>
+          <select
+            id="orgIdentifyBy"
+            className="input"
+            value={identifyBy}
+            onChange={(e) => setIdentifyBy(e.target.value as 'examNumber' | 'name')}
+          >
+            <option value="examNumber">Exam number — marked anonymously</option>
+            <option value="name">Student name — for younger years</option>
+          </select>
+          <p className="small muted" style={{ marginTop: 6 }}>
+            An exam number lets a marker work through a stack of papers without knowing whose
+            is whose. Students without a number assigned fall back to their name, so nothing
+            prints unidentified.
+          </p>
+        </div>
 
         <hr className="divider" />
 

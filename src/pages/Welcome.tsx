@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { emailDomain, findOrgByDomain, joinByDomain, type OrgDomain } from '../lib/org'
+import { BrandLockup } from '../components/BrandMark'
 
 type Step = 'choose' | 'verify-for-org'
 
@@ -96,12 +97,7 @@ export function Welcome() {
     <div className="auth-screen">
       <section className="auth-pitch">
         <div className="stack gap-4">
-          <div className="row gap-3">
-            <span className="brand-mark" style={{ width: 34, height: 34, fontSize: '1rem' }}>
-              S
-            </span>
-            <strong style={{ fontSize: '1.2rem', letterSpacing: '-0.02em' }}>Scriber</strong>
-          </div>
+          <BrandLockup size={34} nameSize="1.45rem" />
           <h1>One more thing before you start.</h1>
           <p className="lede">
             Just so the right things show up in your account — this takes a few seconds and you

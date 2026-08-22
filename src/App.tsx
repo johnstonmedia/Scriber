@@ -24,6 +24,7 @@ import { TestMonitor } from './pages/TestMonitor'
 import { SiteAdmin } from './pages/SiteAdmin'
 import { ComingSoon } from './pages/ComingSoon'
 import { DEFAULT_SITE_CONFIG, subscribeSiteConfig } from './lib/siteConfig'
+import { BrandLockup } from './components/BrandMark'
 
 function useTheme() {
   const [theme, setTheme] = useState<'light' | 'dark'>(
@@ -44,8 +45,7 @@ function TopBar() {
   return (
     <header className="topbar no-print">
       <NavLink to="/" className="brand">
-        <span className="brand-mark">S</span>
-        Scriber
+        <BrandLockup />
       </NavLink>
 
       <nav className="row gap-1">

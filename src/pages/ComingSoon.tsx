@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { BrandMark } from '../components/BrandMark'
 
 /**
  * What the world sees while the site is locked. A site admin signing in
@@ -11,7 +12,7 @@ export function ComingSoon({ message }: { message: string }) {
       <div className="auth-panel" style={{ textAlign: 'center' }}>
         <div className="auth-card stack gap-4">
           <div className="brand" style={{ justifyContent: 'center' }}>
-            <span className="brand-mark">S</span>
+            <BrandMark />
             Scriber
           </div>
           <h1 style={{ margin: 0 }}>Coming soon</h1>

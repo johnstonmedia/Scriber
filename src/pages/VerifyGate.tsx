@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useAuth } from '../lib/auth'
+import { BrandLockup } from '../components/BrandMark'
 
 /**
  * Blocks the whole app — not just org actions — for an account with a
@@ -36,12 +37,7 @@ export function VerifyGate() {
     <div className="auth-screen">
       <section className="auth-pitch">
         <div className="stack gap-4">
-          <div className="row gap-3">
-            <span className="brand-mark" style={{ width: 34, height: 34, fontSize: '1rem' }}>
-              S
-            </span>
-            <strong style={{ fontSize: '1.2rem', letterSpacing: '-0.02em' }}>Scriber</strong>
-          </div>
+          <BrandLockup size={34} nameSize="1.45rem" />
           <h1>Verify your email to continue.</h1>
           <p className="lede">
             {orgNames || 'An organisation'} invited this address — confirming it's really yours

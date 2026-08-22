@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from '../lib/auth'
+import { BrandLockup } from '../components/BrandMark'
 
 export function SignIn() {
   const { signIn, signUp, signInWithGoogle, configured } = useAuth()
@@ -33,12 +34,7 @@ export function SignIn() {
     <div className="auth-screen">
       <section className="auth-pitch">
         <div className="stack gap-4">
-          <div className="row gap-3">
-            <span className="brand-mark" style={{ width: 34, height: 34, fontSize: '1rem' }}>
-              S
-            </span>
-            <strong style={{ fontSize: '1.2rem', letterSpacing: '-0.02em' }}>Scriber</strong>
-          </div>
+          <BrandLockup size={34} nameSize="1.45rem" />
           <h1>Practise with a writer before the exam room does it for real.</h1>
           <p className="lede">
             Scriber acts as your writer under NESA exam provisions. It writes down exactly what

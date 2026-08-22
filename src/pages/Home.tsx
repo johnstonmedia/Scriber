@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useReveal, useScrollProgress, useScrollY } from '../lib/useReveal'
 import { HomeDemo } from '../components/HomeDemo'
 import { HeroScene } from '../components/HeroScene'
+import { BrandMark } from '../components/BrandMark'
 
 function Reveal({ children, className = '', delay = 0 }: { children: ReactNode; className?: string; delay?: number }) {
   const { ref, visible } = useReveal<HTMLDivElement>()
@@ -53,7 +54,7 @@ export function Home() {
       <div className="home-progress" style={{ transform: `scaleX(${progress})` }} aria-hidden="true" />
       <header className="home-nav no-print">
         <Link to="/" className="brand">
-          <span className="brand-mark">S</span>
+          <BrandMark />
           Scriber
         </Link>
         <div className="spacer" />

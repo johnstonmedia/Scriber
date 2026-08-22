@@ -31,8 +31,28 @@
   --shadow-md: 0 4px 16px rgb(16 21 28 / 0.08);
   --shadow-lg: 0 18px 48px rgb(16 21 28 / 0.16);
 
+  /*
+   * Three voices, because there are three speakers.
+   *
+   *   --font-display  the page — headlines, and the words the student wrote
+   *   --font          the system — labels, buttons, dense copy
+   *   --font-mono     the command — what was said that isn't a word
+   *
+   * Keeping them apart is what makes a screen read as Scriber rather than as
+   * any other blue SaaS product.
+   */
+  --font-display: 'Newsreader', Georgia, 'Iowan Old Style', 'Times New Roman', serif;
   --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-answer: 'Georgia', 'Iowan Old Style', 'Times New Roman', serif;
+  --font-answer: 'Newsreader', Georgia, 'Iowan Old Style', 'Times New Roman', serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /*
+   * The beat: a real writer is always slightly behind the person speaking, and
+   * that lag is the product's whole personality. Nothing the writer does
+   * should ever land at the same moment as the thing that caused it.
+   */
+  --beat: 420ms;
+  --land: cubic-bezier(0.2, 0.8, 0.2, 1);
 
   color-scheme: light;
 }
@@ -84,18 +104,32 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/*
+ * Headings are set in the page's own voice, not the system's. A screen full of
+ * Inter reads as software; the serif is what says this is about writing.
+ * Smaller headings (h3, h4) stay in Inter — at label size they are the system
+ * talking, and a serif there is just decoration.
+ */
 h1,
-h2,
+h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
 h3,
 h4 {
   margin: 0;
-  line-height: 1.25;
-  letter-spacing: -0.015em;
-  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  font-weight: 620;
 }
 
-h1 { font-size: 1.6rem; }
-h2 { font-size: 1.2rem; }
+h1 { font-size: 1.85rem; }
+h2 { font-size: 1.35rem; }
 h3 { font-size: 1rem; }
 
 p { margin: 0; }
@@ -270,16 +304,23 @@ textarea.input {
 }
 .brand:hover { text-decoration: none; }
 
-.brand-mark {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: var(--accent);
-  color: #fff;
-  display: grid;
-  place-items: center;
-  font-size: 0.9rem;
-  font-weight: 700;
+/*
+ * The lockup: the mark, then the name. Set in the page's voice, because the
+ * name is a word on a page rather than a piece of interface.
+ */
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+.brand-word {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+  /* Inherited, so the lockup works on the dark sign-in panel as well as the
+     top bar without either needing to know about the other. */
+  color: currentColor;
 }
 
 .nav-link {
@@ -671,7 +712,7 @@ textarea.input {
 }
 .command-row:last-child { border-bottom: 0; }
 .say {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 0.82rem;
   background: var(--surface-alt);
   padding: 2px 7px;
@@ -803,7 +844,7 @@ textarea.input {
 }
 .spell-check .writer-says-icon { background: var(--warn); }
 .spell-check strong { color: var(--warn); }
-.spell-check .input { letter-spacing: 0.28em; font-family: ui-monospace, Menlo, monospace; }
+.spell-check .input { letter-spacing: 0.28em; font-family: var(--font-mono); }
 
 /* The gap left in the answer while the writer waits for a spelling. */
 .awaiting-spelling {
@@ -944,11 +985,15 @@ textarea.input {
 .home-eyebrow { font-size: 0.78rem; }
 
 .home-h1 {
-  font-size: clamp(2.4rem, 6vw, 4.2rem);
-  line-height: 1.05;
-  letter-spacing: -0.03em;
-  font-weight: 720;
+  font-family: var(--font-display);
+  font-size: clamp(2.3rem, 5.4vw, 3.9rem);
+  line-height: 1.06;
+  letter-spacing: -0.022em;
+  /* Newsreader carries a display line at 500. The 720 this inherited was set
+     for Inter, and at this size renders as a different typeface entirely. */
+  font-weight: 500;
   margin: 0;
+  text-wrap: balance;
 }
 .cascade-word-wrap { display: inline-block; overflow: hidden; vertical-align: top; padding-bottom: 0.08em; }
 .cascade-word {
@@ -1295,7 +1340,9 @@ textarea.input {
 }
 
 .hero-token {
-  font-size: 0.78rem;
+  font-family: var(--font-mono);
+  font-size: 0.73rem;
+  letter-spacing: -0.01em;
   padding: 4px 10px;
   border-radius: 999px;
   border: 1px solid var(--line);
@@ -1332,6 +1379,7 @@ textarea.input {
 .hero-page-body { padding: 20px 22px 16px; display: flex; flex-direction: column; gap: 11px; }
 
 .hero-written {
+  font-family: var(--font-answer);
   margin: 0;
   font-size: 1.05rem;
   line-height: 1.6;

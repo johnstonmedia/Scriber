@@ -181,9 +181,22 @@ await teacherPage.getByLabel('Class').selectOption({ label: 'Year 12 English' })
 await teacherPage.getByLabel('Title').fill('Live trial test')
 await teacherPage.getByLabel('Reading time (min)').fill('1')
 await teacherPage.getByLabel('Working time (min)').fill('1')
+
+// The paper is uploaded here, while setting the test up — a teacher has it in
+// front of them rather than already in the library. Extraction happens in
+// this browser, so the file itself never leaves it.
+await teacherPage.getByLabel('Paper').selectOption('__upload__')
+await teacherPage.getByLabel('File (PDF or text)').setInputFiles({
+  name: 'trial-paper.txt',
+  mimeType: 'text/plain',
+  buffer: Buffer.from(
+    'Question 1\nDiscuss how the composer represents discovery as unsettling.\n\n' +
+      'Question 2\nTo what extent does the text privilege memory over experience?\n',
+  ),
+})
 await teacherPage.getByRole('button', { name: 'Create test' }).click()
-await teacherPage.waitForSelector('text=Live trial test', { timeout: 10000 })
-console.log('test created')
+await teacherPage.waitForSelector('text=Live trial test', { timeout: 20000 })
+console.log('test created, with a paper uploaded during setup')
 
 await teacherPage.getByRole('link', { name: 'Monitor' }).click()
 await teacherPage.waitForSelector('text=Waiting room', { timeout: 10000 })

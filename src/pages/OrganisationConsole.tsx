@@ -386,7 +386,14 @@ export function OrganisationConsole() {
       )}
 
       {tab === 'tests' && (
-        <ClassTests orgId={orgId} classes={myClasses} papers={papers} canCreate={isStaff} currentUid={user!.uid} />
+        <ClassTests
+          orgId={orgId}
+          classes={myClasses}
+          papers={papers}
+          canCreate={isStaff}
+          currentUid={user!.uid}
+          onPapersChanged={refresh}
+        />
       )}
     </div>
   )

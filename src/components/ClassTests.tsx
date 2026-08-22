@@ -7,10 +7,13 @@ import {
   type TestPhase,
   type TestSession,
 } from '../lib/testSession'
-import type { OrgClass, OrgPaper } from '../lib/org'
+import { distributeOrgPaper, type OrgClass, type OrgPaper } from '../lib/org'
 import { RULE_PROFILES } from '../lib/ruleProfile'
 import { appError, type AppError } from '../lib/errors'
 import { ErrorNotice } from './ErrorNotice'
+
+/** Sentinel for "I'm bringing my own paper", distinct from any real paper id. */
+const NEW_PAPER = '__upload__'
 
 const PHASE_LABEL: Record<TestPhase, string> = {
   lobby: 'Waiting room',
@@ -33,15 +36,21 @@ export function ClassTests({
   papers,
   canCreate,
   currentUid,
+  onPapersChanged,
 }: {
   orgId: string
   classes: OrgClass[]
   papers: OrgPaper[]
   canCreate: boolean
   currentUid: string
+  /** Called after a paper is uploaded here, so the caller can reload its list. */
+  onPapersChanged?: () => void
 }) {
   const [testsByClass, setTestsByClass] = useState<Record<string, TestSession[]>>({})
   const [error, setError] = useState<AppError | null>(null)
+  /** '' is no paper, NEW_PAPER is upload one now, anything else is an existing id. */
+  const [paperChoice, setPaperChoice] = useState('')
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     const unsubs = classes.map((c) =>
@@ -61,10 +70,48 @@ export function ClassTests({
     const classId = String(form.get('classId') ?? '')
     const cls = classes.find((c) => c.id === classId)
     if (!cls) return
-    const paperId = String(form.get('paperId') ?? '') || null
-    const paper = paperId ? papers.find((p) => p.id === paperId) : null
     const scheduled = String(form.get('scheduledAt') ?? '')
+    const readingMinutes = Number(form.get('readingMinutes') ?? 10)
+    const workingMinutes = Number(form.get('workingMinutes') ?? 40)
+    const chosen = String(form.get('paperId') ?? '')
+    const title = String(form.get('title') ?? '').trim()
+
+    setBusy(true)
     try {
+      // A teacher setting up a test usually has the paper in front of them
+      // rather than already in the library, so it can be uploaded right here.
+      // It is distributed first — reading a PDF happens in this browser and
+      // takes a moment — and the test is then built from the result.
+      let paper: OrgPaper | null = null
+      if (chosen === NEW_PAPER) {
+        const file = form.get('paperFile') as File | null
+        // The input is `required`, so this only catches a form submitted some
+        // other way — but reaching createTestSession with no paper would make
+        // a test that silently has nothing to read.
+        if (!file?.size) {
+          setError(appError('SCR-300', new Error('No file was chosen.')))
+          return
+        }
+        try {
+          paper = await distributeOrgPaper(orgId, currentUid, file, {
+            title: title || file.name.replace(/\.[^.]+$/, ''),
+            readingMinutes,
+            workingMinutes,
+            classIds: [cls.id],
+          })
+        } catch (err) {
+          // Distribution and test creation fail for different reasons — a
+          // scanned PDF with no text is not a permissions problem, and saying
+          // so is the difference between a fixable message and a baffling one.
+          setError(appError('SCR-300', err))
+          return
+        }
+        onPapersChanged?.()
+      } else if (chosen) {
+        paper = papers.find((p) => p.id === chosen) ?? null
+      }
+      const paperId = paper?.id ?? null
+
       await createTestSession(
         orgId,
         currentUid,
@@ -72,17 +119,20 @@ export function ClassTests({
           classId: cls.id,
           className: cls.name,
           paperId,
-          title: String(form.get('title') ?? '').trim() || paper?.title || `${cls.name} test`,
+          title: title || paper?.title || `${cls.name} test`,
           ruleProfile: form.get('ruleProfile') === 'assisted' ? 'assisted' : 'strict',
-          readingMinutes: Number(form.get('readingMinutes') ?? 10),
-          workingMinutes: Number(form.get('workingMinutes') ?? 40),
+          readingMinutes,
+          workingMinutes,
           scheduledAt: scheduled ? new Date(scheduled).getTime() : null,
         },
         paper,
       )
       formEl.reset()
+      setPaperChoice('')
     } catch (err) {
       setError(appError('SCR-400', err))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -110,16 +160,44 @@ export function ClassTests({
               <input id="testTitle" name="title" className="input" placeholder="Term 3 practice test" />
             </div>
             <div className="field">
-              <label htmlFor="testPaperId">Paper (optional)</label>
-              <select id="testPaperId" name="paperId" className="input" defaultValue="">
+              <label htmlFor="testPaperId">Paper</label>
+              <select
+                id="testPaperId"
+                name="paperId"
+                className="input"
+                value={paperChoice}
+                onChange={(e) => setPaperChoice(e.target.value)}
+              >
                 <option value="">No paper — questions only</option>
-                {papers.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.title}
-                  </option>
-                ))}
+                <option value={NEW_PAPER}>Upload a paper…</option>
+                {papers.length > 0 && (
+                  <optgroup label="Already distributed">
+                    {papers.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.title}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </div>
+
+            {paperChoice === NEW_PAPER && (
+              <div className="field">
+                <label htmlFor="testPaperFile">File (PDF or text)</label>
+                <input
+                  id="testPaperFile"
+                  name="paperFile"
+                  type="file"
+                  className="input"
+                  accept=".pdf,.txt"
+                  required
+                />
+                <span className="tiny muted">
+                  Read into questions in this browser. The file itself is never uploaded.
+                </span>
+              </div>
+            )}
             <div className="field">
               <label htmlFor="testRuleProfile">Standard</label>
               <select id="testRuleProfile" name="ruleProfile" className="input" defaultValue="strict">
@@ -141,8 +219,12 @@ export function ClassTests({
               <span className="tiny muted">Students can enter the waiting room 5 minutes before this.</span>
             </div>
           </div>
-          <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} disabled={classes.length === 0}>
-            Create test
+          <button
+            className="btn btn-primary"
+            style={{ alignSelf: 'flex-start' }}
+            disabled={classes.length === 0 || busy}
+          >
+            {busy ? (paperChoice === NEW_PAPER ? 'Reading the paper…' : 'Creating…') : 'Create test'}
           </button>
           {classes.length === 0 && <p className="small muted">Create a class first.</p>}
           <ErrorNotice error={error} onDismiss={() => setError(null)} />

@@ -350,7 +350,7 @@ export function OrgAdminDashboard(props: Props) {
           )}
 
           {section === 'tests' && (
-            <ClassTests orgId={orgId} classes={myClasses} papers={papers} canCreate currentUid={user.uid} />
+            <ClassTests orgId={orgId} classes={myClasses} papers={papers} canCreate currentUid={user.uid} onPapersChanged={refresh} />
           )}
 
           {section === 'requests' && (

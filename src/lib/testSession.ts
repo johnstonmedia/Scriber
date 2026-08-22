@@ -70,6 +70,18 @@ export type TestParticipant = {
   pausedBy: string | null
   /** Whether this student's screen is being shared with the supervisor right now. */
   sharing: boolean
+  /**
+   * What the supervision extension can see and the page cannot: the other
+   * tabs this student has open. Null when no extension is reporting — which
+   * is itself worth showing a supervisor, since it means the tab list is
+   * simply unknown rather than empty.
+   */
+  extension: {
+    focused: boolean
+    tabCount: number
+    otherTabs: { title: string; host: string; active: boolean }[]
+    seenAt: string | null
+  } | null
 }
 
 /** How long before a test's scheduled time a student may enter the waiting room. */
@@ -85,6 +97,8 @@ export type IntegrityAlertType =
   | 'devtools-suspected'
   | 'context-menu'
   | 'screen-share-stopped'
+  /** Raised by the supervision extension, which can see what the page cannot. */
+  | 'other-tab-opened'
 
 export type IntegrityAlert = {
   id: string
@@ -153,6 +167,20 @@ function toTestParticipant(snapshot: QueryDocumentSnapshot<DocumentData>): TestP
     pauseEndsAt: typeof data.pauseEndsAt === 'number' ? data.pauseEndsAt : null,
     pausedBy: typeof data.pausedBy === 'string' ? data.pausedBy : null,
     sharing: data.sharing === true,
+    extension: data.extension?.connected
+      ? {
+          focused: data.extension.focused === true,
+          tabCount: Number(data.extension.tabCount ?? 0),
+          otherTabs: Array.isArray(data.extension.otherTabs)
+            ? data.extension.otherTabs.map((tab: Record<string, unknown>) => ({
+                title: String(tab?.title ?? ''),
+                host: String(tab?.host ?? ''),
+                active: tab?.active === true,
+              }))
+            : [],
+          seenAt: data.extension.seenAt ? isoOf(data.extension.seenAt) : null,
+        }
+      : null,
   }
 }
 
@@ -168,6 +196,7 @@ function toIntegrityAlert(snapshot: QueryDocumentSnapshot<DocumentData>): Integr
     'devtools-suspected',
     'context-menu',
     'screen-share-stopped',
+    'other-tab-opened',
   ]
   return {
     id: snapshot.id,

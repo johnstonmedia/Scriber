@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Scriber</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <img src="icons/icon-48.png" alt="" width="26" height="26" />
+      <strong>Scriber</strong>
+      <span id="badge" class="badge" hidden>Supervising</span>
+    </header>
+
+    <!-- Not paired: the only thing worth showing is how to pair. -->
+    <section id="pair-view" hidden>
+      <p class="lede">
+        Pair this browser with your Scriber account so a supervisor can see your screen and tabs
+        during an exam.
+      </p>
+      <ol class="steps">
+        <li>Open Scriber and sign in.</li>
+        <li>Go to <strong>Settings → Exam supervision</strong> and generate a code.</li>
+        <li>Type it below.</li>
+      </ol>
+      <form id="pair-form">
+        <label for="code">Pairing code</label>
+        <input id="code" name="code" placeholder="ABCD-EFGH" autocomplete="off" spellcheck="false" required />
+        <button type="submit" id="pair-submit">Pair</button>
+      </form>
+      <p id="pair-error" class="error" hidden></p>
+    </section>
+
+    <!-- Paired: state, and a way straight into practice. -->
+    <section id="ready-view" hidden>
+      <p id="state" class="state"></p>
+      <p class="lede" id="state-detail"></p>
+      <a class="button" id="practise" href="#" target="_blank" rel="noopener">Start practising</a>
+      <button class="link" id="unpair">Unpair this browser</button>
+    </section>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

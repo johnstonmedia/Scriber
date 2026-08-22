@@ -39,6 +39,7 @@ const ALERT_LABEL: Record<IntegrityAlertType, string> = {
   'devtools-suspected': 'Developer tools may be open',
   'context-menu': 'Opened the right-click menu',
   'screen-share-stopped': 'Stopped sharing their screen',
+  'other-tab-opened': 'Opened another site',
 }
 
 /** Anything above this is worth the teacher's eye, not just the log. */
@@ -49,12 +50,17 @@ const SERIOUS: IntegrityAlertType[] = ['tab-hidden', 'devtools-shortcut', 'devto
  * who's arrived, whether they're reading, working or done, a live word count
  * and a trailing preview of each answer, and a running integrity feed.
  *
- * It is worth being plain about the limits of that feed, because they are
- * the browser's and not ours: a web page can see its own tab losing focus,
- * and copy/paste and dev-tools shortcuts aimed at itself. It cannot see the
- * student's other tabs, their other applications, or the rest of their
- * screen — no website can. Screen sharing is the only thing that shows those,
- * and it needs a relay server this build doesn't have yet.
+ * Three different things are watching, and they see different amounts, which
+ * is worth keeping straight:
+ *
+ *   - The page itself sees only its own tab: losing focus, and copy, paste
+ *     and dev-tools shortcuts aimed at it. That is every limit the browser
+ *     imposes on web content, not a gap in this code.
+ *   - The supervision extension sees the other tabs by name, because it holds
+ *     a permission no web page can. A student without it installed shows as
+ *     "tabs not monitored" rather than as clean.
+ *   - The shared screen shows everything else — other applications included —
+ *     which is why sharing the whole screen is a condition of sitting a test.
  */
 export function TestMonitor() {
   const { orgId, testId } = useParams<{ orgId: string; testId: string }>()
@@ -328,9 +334,12 @@ export function TestMonitor() {
                         sharing={p.sharing}
                       />
                     )}
-                    {test.phase === 'working' && (
-                      <div className="small muted grow">{p.preview ? `…${p.preview}` : 'Nothing written yet.'}</div>
-                    )}
+                    <div className="grow stack gap-1">
+                      <TabWatch participant={p} />
+                      {test.phase === 'working' && (
+                        <div className="small muted">{p.preview ? `…${p.preview}` : 'Nothing written yet.'}</div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -363,6 +372,44 @@ export function TestMonitor() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+
+/**
+ * The other tabs a student has open, as reported by the supervision
+ * extension.
+ *
+ * The distinction between "no other tabs" and "we cannot see" matters to a
+ * supervisor and is easy to blur, so an unreported student says so plainly
+ * rather than showing an empty list that looks like a clean one.
+ */
+function TabWatch({ participant }: { participant: TestParticipant }) {
+  if (!participant.extension) {
+    return <span className="badge badge-warn">Tabs not monitored</span>
+  }
+
+  const { otherTabs, focused } = participant.extension
+  if (otherTabs.length === 0) {
+    return (
+      <span className="badge badge-good">
+        Scriber only{focused ? '' : ' · window not in focus'}
+      </span>
+    )
+  }
+
+  return (
+    <div className="row gap-2 wrap">
+      <span className="badge badge-warn">
+        {otherTabs.length} other tab{otherTabs.length === 1 ? '' : 's'}
+      </span>
+      {otherTabs.slice(0, 4).map((tab) => (
+        <span className={`badge ${tab.active ? 'badge-live' : ''}`} key={`${tab.host}-${tab.title}`} title={tab.title}>
+          {tab.host || 'unknown'}
+        </span>
+      ))}
+      {otherTabs.length > 4 && <span className="badge">+{otherTabs.length - 4}</span>}
     </div>
   )
 }

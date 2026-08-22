@@ -13,7 +13,9 @@
     "emulators": "firebase emulators:start",
     "deploy": "npm run build && firebase deploy",
     "test:rules": "node scripts/rules-check.mjs",
-    "e2e": "node scripts/e2e.mjs"
+    "e2e": "node scripts/e2e.mjs",
+    "api": "tsx scripts/api-dev.mjs",
+    "test:extension": "node scripts/extension-e2e.mjs"
   },
   "dependencies": {
     "firebase": "^12.17.1",

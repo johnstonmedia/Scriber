@@ -19,6 +19,7 @@ import {
   type TestSession,
 } from '../lib/testSession'
 import { useExamIntegrity } from '../lib/examIntegrity'
+import { announceTestEnd, announceTestStart, extensionInstalled } from '../lib/examExtension'
 import {
   captureScreen,
   loadIceConfig,
@@ -602,6 +603,15 @@ export function ExamRoom() {
     if (!orgId || !testId || !user) return
     void setParticipantSharing(orgId, testId, user.uid, !!screenStream).catch(() => undefined)
   }, [screenStream, orgId, testId, user])
+
+  // The extension reports only for the length of a test. Ending it on unmount
+  // matters as much as starting it: closing the tab, navigating away or
+  // finishing all have to put the reporting back to sleep.
+  useEffect(() => {
+    if (!orgId || !testId || !extensionInstalled()) return
+    announceTestStart(orgId, testId)
+    return () => announceTestEnd()
+  }, [orgId, testId])
 
   useExamIntegrity({
     active: isLiveTest && (phase === 'reading' || phase === 'working'),

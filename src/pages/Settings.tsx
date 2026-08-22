@@ -4,6 +4,8 @@ import { CommandList } from '../components/CommandReference'
 import { readAloud } from '../scribe/speech'
 import { MEMORY_PRESETS, type MemoryPreset } from '../scribe/workingMemory'
 import { RULE_PROFILES } from '../lib/ruleProfile'
+import { auth } from '../lib/firebase'
+import { extensionInstalled, requestPairingCode } from '../lib/examExtension'
 
 export function Settings() {
   const { user, settings, saveSettings, updateName } = useAuth()
@@ -232,11 +234,107 @@ export function Settings() {
           <p className="small muted">Signed in as {user?.email}</p>
         </section>
 
+        <ExamSupervision />
+
         <section className="card card-pad">
           <h2 style={{ marginBottom: 14 }}>Every command</h2>
           <CommandList />
         </section>
       </div>
     </div>
+  )
+}
+
+
+/**
+ * Pairing the supervision extension.
+ *
+ * Only shown to accounts that belong to a school, because that is the only
+ * place a supervised test happens — a personal account has nobody to be
+ * supervised by, and offering them a tab monitor would be strange.
+ */
+function ExamSupervision() {
+  const { user, memberships } = useAuth()
+  const [code, setCode] = useState<string | null>(null)
+  const [expiresAt, setExpiresAt] = useState(0)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const installed = extensionInstalled()
+
+  if (memberships.length === 0) return null
+
+  async function generate() {
+    if (!user) return
+    setBusy(true)
+    setError(null)
+    try {
+      const token = await auth.currentUser?.getIdToken()
+      if (!token) throw new Error('Sign in again to pair the extension.')
+      const issued = await requestPairingCode(token)
+      setCode(issued.code)
+      setExpiresAt(issued.expiresAt)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not generate a code.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="card card-pad stack gap-3">
+      <div>
+        <h2>Exam supervision</h2>
+        <p className="small muted" style={{ marginTop: 6 }}>
+          The Scriber extension lets a supervisor see which other tabs you have open during a
+          test, which the website by itself cannot. It reports nothing outside a test.
+        </p>
+      </div>
+
+      <div className="row gap-2 wrap">
+        <span className={`badge ${installed ? 'badge-good' : 'badge-warn'}`}>
+          {installed ? 'Extension installed' : 'Extension not installed'}
+        </span>
+      </div>
+
+      {code ? (
+        <div className="stack gap-2">
+          <div className="field" style={{ maxWidth: 260 }}>
+            <label>Type this into the extension</label>
+            <div
+              style={{
+                fontFamily: 'ui-monospace, Menlo, monospace',
+                fontSize: '1.6rem',
+                letterSpacing: '0.14em',
+                fontWeight: 600,
+              }}
+            >
+              {code}
+            </div>
+          </div>
+          <p className="small muted">
+            Good for {Math.max(0, Math.round((expiresAt - Date.now()) / 60000))} more minutes, and
+            works once.
+          </p>
+          <button className="btn btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => void generate()}>
+            Generate another
+          </button>
+        </div>
+      ) : (
+        <button
+          className="btn btn-primary"
+          style={{ alignSelf: 'flex-start' }}
+          disabled={busy}
+          onClick={() => void generate()}
+        >
+          {busy ? 'Generating…' : 'Generate a pairing code'}
+        </button>
+      )}
+
+      {error && (
+        <p className="small" style={{ color: 'var(--live)' }}>
+          {error}
+        </p>
+      )}
+    </section>
   )
 }

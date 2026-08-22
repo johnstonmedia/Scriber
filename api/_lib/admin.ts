@@ -38,9 +38,22 @@ function credentials() {
   })
 }
 
+/**
+ * Against the emulators there is nothing to authenticate to, and requiring a
+ * real service account to run the API locally would mean the routes could
+ * only ever be exercised in production. The emulator host variables are the
+ * signal, and they are never set on a deployed function.
+ */
+const usingEmulators = () =>
+  !!process.env.FIRESTORE_EMULATOR_HOST || !!process.env.FIREBASE_AUTH_EMULATOR_HOST
+
 export function adminApp(): App {
   if (cached) return cached
-  cached = getApps()[0] ?? initializeApp({ credential: credentials() })
+  cached =
+    getApps()[0] ??
+    (usingEmulators()
+      ? initializeApp({ projectId: process.env.GCLOUD_PROJECT ?? 'demo-scriber' })
+      : initializeApp({ credential: credentials() }))
   return cached
 }
 

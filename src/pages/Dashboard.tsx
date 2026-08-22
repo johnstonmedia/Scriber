@@ -5,6 +5,7 @@ import { storedPaperIds, usedBytes } from '../lib/fileStore'
 import { sha256 } from '../lib/hash'
 import { RULE_PROFILES } from '../lib/ruleProfile'
 import { subscribeUpcomingTests, type TestSession } from '../lib/testSession'
+import { listClassesITeach } from '../lib/org'
 import {
   attachPaperFile,
   createPaper,
@@ -49,6 +50,17 @@ export function Dashboard() {
   const [heldHere, setHeldHere] = useState<Set<string>>(new Set())
   const [deviceBytes, setDeviceBytes] = useState(0)
   const [upcomingTests, setUpcomingTests] = useState<(TestSession & { orgName: string })[]>([])
+  const [supervising, setSupervising] = useState<(TestSession & { orgName: string })[]>([])
+  const [staffClassIds, setStaffClassIds] = useState<Record<string, string[]>>({})
+
+  /**
+   * Which dashboard this is. Somebody who teaches at one school and studies
+   * at another counts as staff: the supervising view is the one with a
+   * deadline attached to other people, so it leads.
+   */
+  const staffMemberships = memberships.filter((m) => m.role === 'teacher' || m.role === 'admin')
+  const isStaff = staffMemberships.length > 0
+  const inAnyOrg = memberships.length > 0
 
   useEffect(() => {
     if (memberships.length === 0) {
@@ -57,6 +69,39 @@ export function Dashboard() {
     }
     return subscribeUpcomingTests(memberships, setUpcomingTests)
   }, [memberships])
+
+  // A teacher's classes are named on the class documents, not on their own
+  // membership — that list is the student's. So load them before asking which
+  // tests they are running.
+  useEffect(() => {
+    if (!user || staffMemberships.length === 0) return
+    let live = true
+    void Promise.all(
+      staffMemberships.map(
+        async (m) => [m.orgId, (await listClassesITeach(m.orgId, user.uid, m.role)).map((c) => c.id)] as const,
+      ),
+    )
+      .then((pairs) => {
+        if (live) setStaffClassIds(Object.fromEntries(pairs))
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, memberships])
+
+  useEffect(() => {
+    const scoped = staffMemberships
+      .map((m) => ({ orgId: m.orgId, orgName: m.orgName, classIds: staffClassIds[m.orgId] ?? [] }))
+      .filter((m) => m.classIds.length > 0)
+    if (scoped.length === 0) {
+      setSupervising([])
+      return
+    }
+    return subscribeUpcomingTests(scoped, setSupervising)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staffClassIds, memberships])
 
   const refresh = useCallback(async () => {
     if (!user) return
@@ -158,13 +203,22 @@ export function Dashboard() {
         <div className="grow">
           <h1>Hello, {firstName}</h1>
           <p className="muted">
-            Upload a paper, then practise dictating your answer the way you will in the exam.
+            {isStaff
+              ? 'Run a test for a class, or practise dictating an answer yourself.'
+              : inAnyOrg
+                ? 'Your assessments are below. Between them, practise as much as you like.'
+                : 'Upload a paper, then practise dictating your answer the way you will in the exam.'}
           </p>
         </div>
+        {isStaff && staffMemberships[0] && (
+          <Link className="btn btn-primary" to={`/organisations/${staffMemberships[0].orgId}`}>
+            Set up a test
+          </Link>
+        )}
         <button className="btn" onClick={() => navigate('/exam')}>
           Free practice
         </button>
-        <button className="btn btn-primary" onClick={() => setShowUpload((v) => !v)}>
+        <button className={`btn ${isStaff ? '' : 'btn-primary'}`} onClick={() => setShowUpload((v) => !v)}>
           Upload a paper
         </button>
       </div>
@@ -198,9 +252,38 @@ export function Dashboard() {
         </div>
       </div>
 
+      {isStaff && supervising.length > 0 && (
+        <section style={{ marginBottom: 28 }}>
+          <h2 style={{ marginBottom: 12 }}>Tests you are running</h2>
+          <div className="card">
+            {supervising.map((t, i) => (
+              <div
+                key={t.id}
+                className="row gap-3 wrap"
+                style={{ padding: '14px 18px', borderTop: i === 0 ? 'none' : '1px solid var(--line)' }}
+              >
+                <div className="grow">
+                  <strong>{t.title}</strong>
+                  <div className="small muted">
+                    {t.orgName} · {t.className}
+                    {t.scheduledAt ? ` · ${new Date(t.scheduledAt).toLocaleString('en-AU')}` : ''}
+                  </div>
+                </div>
+                <span className={`badge ${t.phase === 'lobby' ? 'badge-accent' : 'badge-live'}`}>
+                  {PHASE_LABEL[t.phase]}
+                </span>
+                <Link className="btn btn-sm btn-primary" to={`/organisations/${t.orgId}/tests/${t.id}`}>
+                  {t.phase === 'lobby' ? 'Open waiting room' : 'Supervise'}
+                </Link>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {upcomingTests.length > 0 && (
         <section style={{ marginBottom: 28 }}>
-          <h2 style={{ marginBottom: 12 }}>Upcoming tasks</h2>
+          <h2 style={{ marginBottom: 12 }}>{isStaff ? 'Your own assessments' : 'Upcoming assessments'}</h2>
           <div className="card">
             {upcomingTests.map((t, i) => (
               <div

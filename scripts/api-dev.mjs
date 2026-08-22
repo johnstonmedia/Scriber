@@ -78,7 +78,16 @@ const server = createServer(async (req, res) => {
     const module = await import(pathToFileURL(candidate).href)
     req.query = Object.fromEntries(url.searchParams)
     req.body = await readBody(req)
-    await module.default(req, decorate(res))
+
+    // Vercel supports two handler shapes and this project uses both: the Node
+    // signature for anything touching firebase-admin, and the web-standard
+    // one for edge routes, which return a Response instead of writing to res.
+    const returned = await module.default(req, decorate(res))
+    if (returned && typeof returned === 'object' && typeof returned.arrayBuffer === 'function') {
+      res.statusCode = returned.status
+      returned.headers.forEach((value, key) => res.setHeader(key, value))
+      res.end(Buffer.from(await returned.arrayBuffer()))
+    }
   } catch (error) {
     console.error(`api ${route} threw`, error)
     if (!res.writableEnded) {

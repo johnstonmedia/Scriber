@@ -737,11 +737,22 @@ export async function getClass(orgId: string, classId: string): Promise<OrgClass
 }
 
 /** Only the classes a student belongs to — matches what the rules allow them to read. */
+/**
+ * The classes a student is *in*. Not the ones a teacher runs — those are on
+ * the class's teacherIds, and a teacher who called this would get an empty
+ * list rather than an error. See listClassesITeach.
+ */
 export async function listMyClasses(orgId: string, uid: string): Promise<OrgClass[]> {
   const snapshot = await getDocs(
     query(classesRef(orgId), where('studentIds', 'array-contains', uid)),
   )
   return snapshot.docs.map(toClass)
+}
+
+/** The classes a teacher runs. An admin runs the whole organisation's. */
+export async function listClassesITeach(orgId: string, uid: string, role: OrgRole): Promise<OrgClass[]> {
+  const all = await listAllClasses(orgId)
+  return role === 'admin' ? all : all.filter((c) => c.teacherIds.includes(uid))
 }
 
 export async function addStudentToClass(orgId: string, classId: string, uid: string): Promise<void> {

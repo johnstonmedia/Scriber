@@ -10,6 +10,17 @@ import { resolve } from 'node:path'
  */
 export default defineConfig({
   base: process.env.VITE_BASE ?? '/',
+  server: {
+    // On Vercel the API routes are served from the same origin as the app.
+    // Locally they run separately (npm run api), so point /api at them and the
+    // client code needs no notion of which environment it's in.
+    proxy: {
+      '/api': {
+        target: process.env.API_ORIGIN ?? 'http://localhost:5174',
+        changeOrigin: true,
+      },
+    },
+  },
   plugins: [
     react(),
     {

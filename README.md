@@ -319,8 +319,10 @@ has no SPA rewrite of its own.
 
 ### Vercel
 
-The only host here that runs the `api/` functions, so it's the one to use if
-screen sharing has to work behind a school network (see "Screen sharing").
+The only host that runs the `api/` functions, and by now several things need
+them: per-school subdomains, carrying a sign-in between subdomains, the
+supervision extension, and TURN credentials for screen sharing behind a
+school network.
 
 1. **vercel.com → Add New → Project**, import this repository.
 2. Vercel reads `vercel.json`: framework Vite, build `npm run build`, output
@@ -332,7 +334,15 @@ screen sharing has to work behind a school network (see "Screen sharing").
 4. Deploy, then add the deployment's domain under Firebase **Authentication →
    Settings → Authorised domains**, or Google sign-in will refuse to run on
    it. Add both the production domain and any custom domain.
-5. Optional, for TURN: add `TURN_URLS` and `TURN_SECRET` and redeploy.
+5. Add **`FIREBASE_SERVICE_ACCOUNT`** — the JSON from Firebase **Project
+   settings → Service accounts → Generate new private key**, pasted whole (or
+   base64-encoded, which avoids the newline mangling some dashboards do). The
+   API routes need it to verify sign-ins and read Firestore as a server.
+6. Add **`PUBLIC_ROOT_DOMAIN`** (`pracscriber.com`) so the extension can tell
+   your own pages from the rest of the web.
+7. For subdomains, add a **wildcard domain** `*.pracscriber.com` alongside
+   `app.pracscriber.com`, and point a `CNAME` for `*` at Vercel.
+8. Optional, for TURN: add `TURN_URLS` and `TURN_SECRET` and redeploy.
 
 `vercel.json` rewrites everything except `/api/*` to `index.html`, so deep
 links work without the `404.html` trick GitHub Pages needs.
@@ -358,13 +368,81 @@ certificate.
 
 ---
 
+## Subdomains
+
+A school claims one in **Settings → Web address**, giving it
+`stpauls.pracscriber.com`. Everyone else uses `app.pracscriber.com`, which is
+the same Scriber without the organisation machinery.
+
+Belong to exactly one school and you are taken to it; land on a school's
+address you don't belong to and you are sent back to the plain app. A site
+admin is never moved, since they work across every school.
+
+Uniqueness lives in `orgSlugs/{slug}` rather than a field on the organisation:
+a document ID is the only thing Firestore makes unique across a collection, so
+claiming a subdomain is a create that fails if somebody already holds it.
+
+Crossing between subdomains needs the backend. A Firebase session belongs to
+one origin, so `/api/auth/handoff` issues a one-off token that the arriving
+origin spends — carried in the URL fragment, which never reaches a server log.
+
+Locally there are no subdomains, so this is all inert and the app behaves as
+the plain one.
+
+## The supervision extension
+
+`extension/` is an unpacked MV3 extension. Load it via **chrome://extensions →
+Developer mode → Load unpacked**.
+
+It exists for the one thing a web page structurally cannot do: a tab is walled
+off from every other tab, so Scriber's own page can only report that it lost
+focus, never where the focus went. The extension reports the other tabs by
+hostname and title — never full URLs, since that a student opened a search
+engine is the point and what they typed into it is not.
+
+It reports only while a test is being sat, and nothing at all outside one.
+Pairing is how something with no Firebase session earns the right to speak: a
+signed-in student generates a code in **Settings → Exam supervision** and types
+it into the extension, which trades it for a token — single use, ten minutes,
+stored hashed. A student without it installed shows on the monitor as "tabs
+not monitored" rather than as clean.
+
+## Exam numbers
+
+Staff assign a student's exam number, on the invite or on the class roster;
+students never can, since the point is that it identifies a paper without
+naming its author. Printing a session puts that number on its own front sheet,
+large enough to read off the top of a stack, with the name nowhere on it.
+
+Schools that hand back by name instead switch the whole organisation over in
+**Settings → Printed answers are headed with**. A student with no number
+assigned falls back to their name, so nothing prints unidentified.
+
 ## Tests
 
 ```bash
-npm test               # scribe engine unit tests
-npm run test:rules     # proves the security rules isolate accounts (emulators must be running)
-npm run e2e            # full browser run against the emulators
+npm test                # scribe engine and host-parsing unit tests
+npm run test:rules      # proves the security rules isolate accounts
+npm run test:extension  # the extension's pairing and reporting, including what must fail
+npm run e2e             # full browser run against the emulators
 ```
+
+The rules and extension suites need the emulators (`npm run emulators`); the
+extension suite also needs the API routes (`npm run api`). The rules suite
+clears the emulator before seeding, so it can be re-run without restarting
+anything.
+
+### Running the backend locally
+
+```bash
+npm run emulators   # in one terminal
+npm run api         # in another — serves api/ on :5174
+VITE_USE_EMULATORS=true npm run dev
+```
+
+Vite proxies `/api` to that server, so client code needs no notion of which
+environment it is in. The API routes use the emulators automatically and need
+no service account locally.
 
 The scribe engine is a pure `(state, utterance) -> (state, events)` reducer, so
 its behaviour is covered directly — including that recogniser-supplied

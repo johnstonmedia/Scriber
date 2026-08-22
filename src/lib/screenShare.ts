@@ -40,7 +40,10 @@ const FALLBACK: RTCConfiguration = {
  */
 export async function loadIceConfig(): Promise<RTCConfiguration> {
   try {
-    const response = await fetch('/api/ice-servers')
+    // Bounded deliberately: a backend that hangs rather than fails would
+    // otherwise stop screen sharing from ever starting, which is a far worse
+    // outcome than starting it on STUN alone.
+    const response = await fetch('/api/ice-servers', { signal: AbortSignal.timeout(4000) })
     if (!response.ok) return FALLBACK
     const data = (await response.json()) as { iceServers?: RTCIceServer[] }
     return data.iceServers?.length ? { iceServers: data.iceServers } : FALLBACK

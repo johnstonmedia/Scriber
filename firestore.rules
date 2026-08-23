@@ -109,6 +109,39 @@ service cloud.firestore {
       allow create: if isSignedIn();
     }
 
+    // A school asking for a demo, filled in on the public site by somebody
+    // who has no account yet — so create is open to anyone, signed in or not.
+    // That is only safe because it is strictly write-only from outside: the
+    // shape below is the entire document, every text field has a ceiling so
+    // this can't be used as free storage, a new request must start as 'new',
+    // and nobody but a site admin can ever read one back. Filing a request
+    // therefore reveals nothing and the queue is not browsable.
+    match /demoRequests/{requestId} {
+      allow read, update, delete: if isSiteAdmin();
+      allow create: if request.resource.data.keys().hasOnly(
+            ['organisation', 'contactName', 'email', 'role', 'students', 'message',
+             'status', 'orgId', 'handledBy', 'createdAt'])
+        && request.resource.data.keys().hasAll(['organisation', 'contactName', 'email', 'status'])
+        && request.resource.data.status == 'new'
+        && request.resource.data.get('orgId', null) == null
+        && request.resource.data.get('handledBy', null) == null
+        && request.resource.data.organisation is string
+        && request.resource.data.organisation.size() > 0
+        && request.resource.data.organisation.size() <= 120
+        && request.resource.data.contactName is string
+        && request.resource.data.contactName.size() > 0
+        && request.resource.data.contactName.size() <= 120
+        && request.resource.data.email is string
+        && request.resource.data.email.size() > 0
+        && request.resource.data.email.size() <= 200
+        && request.resource.data.get('role', '') is string
+        && request.resource.data.get('role', '').size() <= 120
+        && request.resource.data.get('students', '') is string
+        && request.resource.data.get('students', '').size() <= 60
+        && request.resource.data.get('message', '') is string
+        && request.resource.data.get('message', '').size() <= 1500;
+    }
+
     // Platform-wide switches a site admin flips — currently just the
     // "coming soon" lock. Readable by anyone (signed in or not) because the
     // app has to know whether to show the holding page before it knows who
@@ -186,11 +219,25 @@ service cloud.firestore {
       // access to, may start a new organisation — they become its first
       // admin via the members write below, in the same client-side
       // transaction.
+      // Anyone but a site admin starts on a demo, and cannot write themselves
+      // a larger one on the way in — otherwise the plan rule below would only
+      // be a rule about editing, and a school could set its own ceiling by
+      // choosing it at creation.
       allow create: if isEmailVerified()
         && request.resource.data.createdBy == request.auth.uid
         && (isSiteAdmin()
-          || exists(/databases/$(database)/documents/orgCreators/$(request.auth.token.email.lower())));
-      allow update, delete: if isOrgAdmin(orgId);
+          || (exists(/databases/$(database)/documents/orgCreators/$(request.auth.token.email.lower()))
+            && request.resource.data.plan.kind == 'demo'
+            && request.resource.data.plan.studentSeats == 5));
+      // A school's own admin runs everything about the organisation except
+      // how big it is allowed to be. The plan — how many students the school
+      // is licensed for — is the one field only a site admin may write, since
+      // a school that could raise its own ceiling has no ceiling. Note that
+      // isOrgAdmin() folds in site admins, so the second clause is what an
+      // ordinary org admin is held to.
+      allow update: if isOrgAdmin(orgId)
+        && (isSiteAdmin() || request.resource.data.get('plan', {}) == resource.data.get('plan', {}));
+      allow delete: if isOrgAdmin(orgId);
 
       match /members/{uid} {
         // Teachers and admins see the roster to build classes; a student
@@ -227,7 +274,12 @@ service cloud.firestore {
           && exists(/databases/$(database)/documents/organisations/$(orgId)/invites/$(request.auth.token.email.lower()))
           && get(/databases/$(database)/documents/organisations/$(orgId)/invites/$(request.auth.token.email.lower())).data.status == 'pending'
           && request.resource.data.role == get(/databases/$(database)/documents/organisations/$(orgId)/invites/$(request.auth.token.email.lower())).data.role
-          && request.resource.data.role in ['student', 'teacher']
+          // Including 'admin': the role comes from an invite only an existing
+          // admin could issue, and is pinned to it above, so accepting an
+          // admin invite grants nothing the inviter couldn't already write
+          // directly. Excluding it only broke handing a school its own
+          // organisation — which is exactly how a demo starts.
+          && request.resource.data.role in ['student', 'teacher', 'admin']
           && request.resource.data.status == 'active'
           // An exam number identifies a paper without naming its author, so a
           // student setting their own would defeat it. They may only carry

@@ -24,6 +24,7 @@ import {
 import { ClassTests } from '../components/ClassTests'
 import { ClassCard, QuestionAssignment } from './OrganisationConsole'
 import { ErrorNotice } from '../components/ErrorNotice'
+import { SeatMeter } from '../components/SeatMeter'
 import { appError, type AppError } from '../lib/errors'
 
 type Section =
@@ -173,6 +174,7 @@ export function OrgAdminDashboard(props: Props) {
                   <div className="label">Auto-join domains</div>
                 </div>
               </div>
+              <SeatMeter plan={org.plan} members={members} invites={invites} />
               {requests.length > 0 && (
                 <div className="insight insight-watch">
                   {requests.length} join request{requests.length === 1 ? '' : 's'} waiting —{' '}
@@ -185,6 +187,8 @@ export function OrgAdminDashboard(props: Props) {
           )}
 
           {section === 'roster' && (
+            <>
+            <SeatMeter plan={org.plan} members={members} invites={invites} />
             <div className="card">
               {members.map((m, i) => (
                 <div
@@ -246,6 +250,7 @@ export function OrgAdminDashboard(props: Props) {
                 )}
               </div>
             </div>
+            </>
           )}
 
           {section === 'classes' && (

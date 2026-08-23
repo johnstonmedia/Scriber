@@ -1142,6 +1142,54 @@ textarea.input {
   .home-steps-line::after { transition: none; }
 }
 
+/* How much of a school's licence is used. Reads as a fact, not a warning,
+   until it actually is one. */
+.seat-meter {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.seat-meter-full { border-color: var(--warn); }
+.seat-meter-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+.seat-meter-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform var(--beat) var(--land);
+}
+.seat-meter-full .seat-meter-fill { background: var(--warn); }
+@media (prefers-reduced-motion: reduce) {
+  .seat-meter-fill { transition: none; }
+}
+
+/* The school's way in. Wide enough to read as a real form rather than a
+   newsletter signup, and capped so the fields don't stretch across a desk
+   monitor. */
+.home-demo-request { padding-bottom: 20px; }
+.demo-request-form,
+.demo-request-done {
+  max-width: 760px;
+  margin: 0 auto;
+}
+.demo-request-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+.demo-request-form textarea.input { resize: vertical; min-height: 76px; }
+.demo-request-done { border-color: var(--accent); }
+
 .home-cta {
   text-align: center;
   padding: 100px 24px 120px;

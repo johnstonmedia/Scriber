@@ -17,6 +17,7 @@ import {
   collectionGroup,
   deleteDoc,
   doc,
+  getCountFromServer,
   getDoc,
   getDocs,
   orderBy,
@@ -33,6 +34,7 @@ import { sendPasswordResetEmail } from 'firebase/auth'
 import { auth, db } from './firebase'
 import { extractQuestions } from './questionExtract'
 import type { ExtractedQuestion } from './questionSplit'
+import { demoPlan, planOf, seatUsage, seatsFullMessage, type OrgPlan, type SeatUsage } from './seats'
 
 export type OrgRole = 'student' | 'teacher' | 'admin'
 
@@ -68,6 +70,8 @@ export type Organisation = {
     tagline: string
     logoDataUrl: string | null
   }
+  /** How many students this school is licensed for — see seats.ts. */
+  plan: OrgPlan
 }
 
 /** A logo is embedded directly in the org document, so it has to stay tiny. */
@@ -195,6 +199,7 @@ function toOrganisation(snapshot: QueryDocumentSnapshot<DocumentData>): Organisa
       tagline: typeof data.branding?.tagline === 'string' ? data.branding.tagline : '',
       logoDataUrl: typeof data.branding?.logoDataUrl === 'string' ? data.branding.logoDataUrl : null,
     },
+    plan: planOf(data),
   }
 }
 
@@ -313,6 +318,12 @@ export async function createOrganisation(
   uid: string,
   profile: { email: string; name: string },
   name: string,
+  /**
+   * A school starts on a demo unless a site admin licenses it here and now —
+   * which is what happens when one is created straight from a demo request
+   * that has already been agreed.
+   */
+  plan: OrgPlan = demoPlan(uid),
 ): Promise<Organisation> {
   const org = orgDoc(crypto.randomUUID())
   await setDoc(org, {
@@ -322,6 +333,7 @@ export async function createOrganisation(
     slug: null,
     settings: { defaultRuleProfile: 'strict', allowJoinRequests: true, identifyBy: 'examNumber' },
     branding: { accentColor: '#1F5FD8', tagline: '', logoDataUrl: null },
+    plan,
   })
   try {
     await setDoc(doc(membersRef(org.id), uid), {
@@ -495,6 +507,11 @@ export async function getMembership(orgId: string, uid: string): Promise<Members
 }
 
 export async function updateMemberRole(orgId: string, uid: string, role: OrgRole): Promise<void> {
+  // Staff don't take seats, so moving somebody down to student takes one.
+  // Somebody who is already a student is holding theirs and doesn't need
+  // another — checking would have them fail their own seat.
+  const current = await getMembership(orgId, uid)
+  if (current?.role !== 'student') await requireSeat(orgId, role)
   await updateDoc(doc(membersRef(orgId), uid), { role })
 }
 
@@ -505,6 +522,71 @@ export async function removeMember(orgId: string, uid: string): Promise<void> {
 /** The standard, secure way to reset someone's password: email them a link. */
 export async function resetMemberPassword(email: string): Promise<void> {
   await sendPasswordResetEmail(auth, email)
+}
+
+// -------------------------------------------------------------------- seats
+
+/**
+ * Counts the roster before letting anybody else in.
+ *
+ * Deliberately a live count rather than a running total kept on the
+ * organisation document: a counter that drifted high would refuse seats a
+ * school has actually paid for, and a support call about a school being
+ * unable to add the students on its licence is a worse failure than the one
+ * a counter would prevent. See seats.ts for what this does and does not
+ * guarantee.
+ */
+export async function getSeatUsage(orgId: string, plan?: OrgPlan): Promise<SeatUsage> {
+  const resolved = plan ?? (await getOrganisation(orgId))?.plan ?? planOf(null)
+  // Uncapped organisations skip both counts entirely — there is nothing to
+  // compare them against, and this runs on every invite screen.
+  if (resolved.studentSeats === null) return seatUsage(resolved, 0, 0)
+  const [members, invites] = await Promise.all([
+    getCountFromServer(query(membersRef(orgId), where('role', '==', 'student'))),
+    getCountFromServer(
+      query(invitesRef(orgId), where('role', '==', 'student'), where('status', '==', 'pending')),
+    ),
+  ])
+  return seatUsage(resolved, members.data().count, invites.data().count)
+}
+
+/**
+ * Thrown when a school is at its licensed number of students. Not an SCR
+ * code: it is a true, actionable answer, not a fault, and the person reading
+ * it can do something about it.
+ */
+export class SeatsFullError extends Error {
+  readonly usage: SeatUsage
+  constructor(usage: SeatUsage, orgName: string) {
+    super(seatsFullMessage(usage, orgName))
+    this.name = 'SeatsFullError'
+    this.usage = usage
+  }
+}
+
+/**
+ * Refuses the write if admitting one more student would go over the licence.
+ *
+ * `holdsInvite` is for somebody accepting an invitation that already reserved
+ * their seat: counting outstanding invites there would have them turned away
+ * by their own, so only the roster is compared against the licence.
+ */
+async function requireSeat(
+  orgId: string,
+  role: OrgRole,
+  options: { holdsInvite?: boolean } = {},
+): Promise<void> {
+  if (role !== 'student') return
+  const org = await getOrganisation(orgId)
+  if (!org || org.plan.studentSeats === null) return
+  const usage = await getSeatUsage(orgId, org.plan)
+  const full = options.holdsInvite ? usage.used >= org.plan.studentSeats : usage.full
+  if (full) throw new SeatsFullError(usage, org.name)
+}
+
+/** Only a site admin may write a plan — firestore.rules refuses anyone else. */
+export async function setOrgPlan(orgId: string, plan: OrgPlan): Promise<void> {
+  await updateDoc(orgDoc(orgId), { plan })
 }
 
 // ------------------------------------------------------------------ invites
@@ -519,6 +601,10 @@ export async function inviteMember(
   /** Assigned now so it is in place before the student's first test. */
   examNumber?: string | null,
 ): Promise<void> {
+  // An outstanding invite already holds a seat, so the check happens here
+  // rather than only on acceptance — a school should find out it is full
+  // while inviting, not leave a student to discover it when they click join.
+  await requireSeat(orgId, role)
   await setDoc(doc(invitesRef(orgId), normaliseEmail(email)), {
     email: normaliseEmail(email),
     role,
@@ -574,6 +660,9 @@ export async function acceptInvite(
   // Rules require this to match the invite exactly — see firestore.rules.
   const examNumber = typeof invite.data().examNumber === 'string' ? (invite.data().examNumber as string) : null
   const org = await getOrganisation(orgId)
+  // An invite issued while there was room can still outlive the seat, if the
+  // school's licence was reduced or somebody else was admitted first.
+  await requireSeat(orgId, role, { holdsInvite: true })
 
   const batch = writeBatch(db)
   batch.set(doc(membersRef(orgId), profile.uid), {
@@ -646,6 +735,7 @@ export async function joinByDomain(
   profile: { uid: string; email: string; name: string },
 ): Promise<void> {
   const org = await getOrganisation(orgId)
+  await requireSeat(orgId, 'student')
   await setDoc(doc(membersRef(orgId), profile.uid), {
     uid: profile.uid,
     orgName: org?.name ?? '',
@@ -690,6 +780,7 @@ export async function approveJoinRequest(
   role: OrgRole = 'student',
 ): Promise<void> {
   const org = await getOrganisation(orgId)
+  await requireSeat(orgId, role)
   const batch = writeBatch(db)
   batch.set(doc(membersRef(orgId), request.uid), {
     uid: request.uid,

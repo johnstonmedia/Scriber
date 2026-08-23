@@ -4,6 +4,7 @@ import { useReveal, useScrollProgress, useScrollY } from '../lib/useReveal'
 import { HomeDemo } from '../components/HomeDemo'
 import { HeroScene } from '../components/HeroScene'
 import { BrandMark } from '../components/BrandMark'
+import { DemoRequestForm } from '../components/DemoRequestForm'
 import type { SiteContent } from '../lib/siteConfig'
 
 function Reveal({ children, className = '', delay = 0 }: { children: ReactNode; className?: string; delay?: number }) {
@@ -88,6 +89,9 @@ export function Home({ content }: { content: SiteContent }) {
             </Link>
             <a href="#how" className="btn btn-lg">
               See how it works
+            </a>
+            <a href="#demo" className="btn btn-lg btn-ghost">
+              I'm from a school
             </a>
           </div>
           <HeroScene />
@@ -182,6 +186,20 @@ export function Home({ content }: { content: SiteContent }) {
             </p>
           </Reveal>
         </div>
+      </section>
+
+      <section className="home-section home-demo-request" id="demo">
+        <Reveal className="home-section-head">
+          <span className="home-kicker">For schools</span>
+          <h2 className="home-h2">Are you part of a school or organisation?</h2>
+          <p className="lede" style={{ maxWidth: '54ch' }}>
+            Tell us who you are and we'll set you up with a demo — your own papers, your school's
+            name on it, and your students practising under real conditions.
+          </p>
+        </Reveal>
+        <Reveal delay={100}>
+          <DemoRequestForm />
+        </Reveal>
       </section>
 
       <section className="home-cta">

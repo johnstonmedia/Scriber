@@ -12,6 +12,7 @@ import {
   signInWithEmailAndPassword,
 } from 'firebase/auth'
 import {
+  addDoc,
   collection,
   collectionGroup,
   connectFirestoreEmulator,
@@ -145,6 +146,16 @@ async function signInAs(email) {
   await sleep(150)
 }
 
+// What anyone but a site admin has to start an organisation on — the rules
+// pin both fields, so a school cannot choose its own ceiling on the way in.
+const DEMO_PLAN = {
+  kind: 'demo',
+  studentSeats: 5,
+  expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+  setBy: 'test-harness',
+  setAt: new Date().toISOString(),
+}
+
 // ---------------------------------------------------------------- accounts
 
 const orgAdmin = await account('orgadmin@school.test')
@@ -181,6 +192,7 @@ await allowed('a granted org-creator can create an organisation and become its a
     createdBy: orgAdmin.uid,
     createdAt: new Date().toISOString(),
     settings: { defaultRuleProfile: 'strict', allowJoinRequests: true },
+    plan: DEMO_PLAN,
   })
   await setDoc(doc(db, 'organisations', orgAId, 'members', orgAdmin.uid), {
     uid: orgAdmin.uid,
@@ -668,6 +680,7 @@ await setDoc(doc(db, 'organisations', orgBId), {
   createdBy: rivalAdmin.uid,
   createdAt: new Date().toISOString(),
   settings: { defaultRuleProfile: 'strict', allowJoinRequests: true },
+  plan: DEMO_PLAN,
 })
 await setDoc(doc(db, 'organisations', orgBId, 'members', rivalAdmin.uid), {
   uid: rivalAdmin.uid,
@@ -1001,6 +1014,125 @@ await denied('a student cannot set their own exam number', async () => {
 await denied('a student cannot clear their own exam number', async () => {
   await signInAs('student@school.test')
   await updateDoc(doc(db, 'organisations', orgAId, 'members', student.uid), { examNumber: null })
+})
+
+// ------------------------------------------------------- seats and the plan
+//
+// The plan is what a school pays for, so the one thing a school's own admin
+// must not be able to edit. Everything else about the organisation is theirs.
+
+await denied("an org admin cannot raise their own school's seat count", async () => {
+  await signInAs('orgadmin@school.test')
+  await updateDoc(doc(db, 'organisations', orgAId), {
+    plan: { ...DEMO_PLAN, kind: 'licensed', studentSeats: 150 },
+  })
+})
+
+await denied('an org admin cannot remove the seat limit entirely', async () => {
+  await signInAs('orgadmin@school.test')
+  await updateDoc(doc(db, 'organisations', orgAId), {
+    plan: { ...DEMO_PLAN, studentSeats: null },
+  })
+})
+
+await denied('an org admin cannot extend their own demo', async () => {
+  await signInAs('orgadmin@school.test')
+  await updateDoc(doc(db, 'organisations', orgAId), {
+    plan: { ...DEMO_PLAN, expiresAt: new Date(Date.now() + 3650 * 86_400_000).toISOString() },
+  })
+})
+
+await allowed('an org admin can still rename their school', async () => {
+  await signInAs('orgadmin@school.test')
+  await updateDoc(doc(db, 'organisations', orgAId), { name: 'School A (renamed)' })
+})
+
+await denied('an org-creator cannot license themselves at creation time', async () => {
+  await signInAs('orgadmin@school.test')
+  await setDoc(doc(db, 'organisations', 'self-licensed'), {
+    name: 'Self-licensed',
+    createdBy: orgAdmin.uid,
+    createdAt: new Date().toISOString(),
+    settings: {},
+    plan: { ...DEMO_PLAN, kind: 'licensed', studentSeats: 150 },
+  })
+})
+
+await denied('an org-creator cannot start an organisation with no plan at all', async () => {
+  await signInAs('orgadmin@school.test')
+  await setDoc(doc(db, 'organisations', 'planless'), {
+    name: 'Planless',
+    createdBy: orgAdmin.uid,
+    createdAt: new Date().toISOString(),
+    settings: {},
+  })
+})
+
+await allowed("a site admin can license a school", async () => {
+  await signInAs('outsider@school.test') // granted site admin further up
+  await updateDoc(doc(db, 'organisations', orgAId), {
+    plan: { kind: 'licensed', studentSeats: 50, expiresAt: null, setBy: outsider.uid, setAt: new Date().toISOString() },
+  })
+})
+
+// -------------------------------------------------------------- demo requests
+//
+// The only collection anybody can write to without an account. It has to stay
+// write-only: filing a request must reveal nothing, and must not be a way to
+// store arbitrary data on someone else's Firestore bill.
+
+const validRequest = {
+  organisation: 'Northside High School',
+  contactName: 'Sam Patel',
+  email: 'sam.patel@northside.nsw.edu.au',
+  role: 'Head of Learning Support',
+  students: 'About 25',
+  message: 'Trials are in Term 3.',
+  status: 'new',
+  orgId: null,
+  handledBy: null,
+  createdAt: new Date().toISOString(),
+}
+
+await allowed('a school with no account can ask for a demo', async () => {
+  await auth.signOut()
+  await sleep(150)
+  await addDoc(collection(db, 'demoRequests'), validRequest)
+})
+
+await denied('a demo request cannot arrive already approved', async () => {
+  await addDoc(collection(db, 'demoRequests'), { ...validRequest, status: 'approved' })
+})
+
+await denied('a demo request cannot arrive already attached to an organisation', async () => {
+  await addDoc(collection(db, 'demoRequests'), { ...validRequest, orgId: orgAId })
+})
+
+await denied('a demo request cannot carry extra fields', async () => {
+  await addDoc(collection(db, 'demoRequests'), { ...validRequest, payload: 'x'.repeat(100) })
+})
+
+await denied('a demo request cannot be used as free storage', async () => {
+  await addDoc(collection(db, 'demoRequests'), { ...validRequest, message: 'x'.repeat(2000) })
+})
+
+await denied('a demo request needs a school and a person', async () => {
+  await addDoc(collection(db, 'demoRequests'), { ...validRequest, organisation: '' })
+})
+
+await denied('nobody signed out can read the demo request queue', () =>
+  getDocs(collection(db, 'demoRequests')),
+)
+
+await denied('an org admin cannot read the demo request queue either', async () => {
+  await signInAs('orgadmin@school.test')
+  await getDocs(collection(db, 'demoRequests'))
+})
+
+await allowed('a site admin reads the demo request queue', async () => {
+  await signInAs('outsider@school.test')
+  const snap = await getDocs(collection(db, 'demoRequests'))
+  if (snap.empty) throw new Error('expected the filed request to be there')
 })
 
 await adminApp.delete()

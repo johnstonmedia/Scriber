@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
-import { resetMemberPassword } from '../lib/org'
+import { createOrganisation, inviteMember, resetMemberPassword, setOrgPlan } from '../lib/org'
 import {
   deleteOrganisation,
   grantOrgCreator,
@@ -10,6 +10,20 @@ import {
   revokeOrgCreator,
   type OrganisationSummary,
 } from '../lib/siteAdmin'
+import {
+  DEMO_SEATS,
+  SEAT_TIERS,
+  demoPlan,
+  licensedPlan,
+  planExpired,
+  planLabel,
+} from '../lib/seats'
+import {
+  deleteDemoRequest,
+  listDemoRequests,
+  setDemoRequestStatus,
+  type DemoRequest,
+} from '../lib/demoRequests'
 import {
   DEFAULT_SITE_CONFIG,
   setSiteContent,
@@ -79,6 +93,7 @@ export function SiteAdmin() {
 
       <SiteLockPanel />
       <SiteContentEditor />
+      <DemoRequestQueue onOrgCreated={() => void refresh()} />
 
       <section className="card card-pad stack gap-3" style={{ marginBottom: 24, maxWidth: 480 }}>
         <h2>Look up an account</h2>
@@ -172,7 +187,33 @@ export function SiteAdmin() {
                     {org.memberCount} member{org.memberCount === 1 ? '' : 's'} · created{' '}
                     {new Date(org.createdAt).toLocaleDateString('en-AU')}
                   </div>
+                  <div className="tiny" style={{ marginTop: 4 }}>
+                    <span
+                      className={`badge ${
+                        org.plan.studentSeats === null
+                          ? 'badge-warn'
+                          : planExpired(org.plan)
+                            ? 'badge-live'
+                            : org.plan.kind === 'demo'
+                              ? 'badge-accent'
+                              : 'badge-good'
+                      }`}
+                    >
+                      {planLabel(org.plan)}
+                    </span>
+                    {planExpired(org.plan) && (
+                      <span className="muted"> · demo expired {new Date(org.plan.expiresAt!).toLocaleDateString('en-AU')}</span>
+                    )}
+                  </div>
                 </div>
+                <SeatTierPicker
+                  org={org}
+                  onChanged={() => {
+                    setNotice(`Updated the plan for "${org.name}".`)
+                    void refresh()
+                  }}
+                  onError={setError}
+                />
                 <Link className="btn btn-sm" to={`/organisations/${org.id}`}>
                   Open
                 </Link>
@@ -199,6 +240,240 @@ export function SiteAdmin() {
         )}
       </section>
     </div>
+  )
+}
+
+/**
+ * How many students a school is licensed for. Only a site admin can change
+ * this — firestore.rules refuses a plan write from a school's own admin, so
+ * this control is the only place a ceiling moves.
+ */
+function SeatTierPicker({
+  org,
+  onChanged,
+  onError,
+}: {
+  org: OrganisationSummary
+  onChanged: () => void
+  onError: (message: string) => void
+}) {
+  const { user } = useAuth()
+  const [busy, setBusy] = useState(false)
+
+  const current = org.plan.kind === 'demo' ? 'demo' : String(org.plan.studentSeats ?? '')
+
+  async function apply(value: string) {
+    if (!user || value === current) return
+    setBusy(true)
+    try {
+      await setOrgPlan(
+        org.id,
+        value === 'demo'
+          ? demoPlan(user.uid)
+          : value === ''
+            ? { ...licensedPlan(0, user.uid), studentSeats: null }
+            : licensedPlan(Number(value), user.uid),
+      )
+      onChanged()
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Could not change that plan.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <label className="row gap-2" style={{ alignItems: 'center' }}>
+      <span className="tiny muted">Seats</span>
+      <select
+        className="input"
+        style={{ width: 150 }}
+        disabled={busy}
+        value={current}
+        onChange={(e) => void apply(e.target.value)}
+        aria-label={`Student seats for ${org.name}`}
+      >
+        <option value="demo">Demo — {DEMO_SEATS}</option>
+        {SEAT_TIERS.map((tier) => (
+          <option key={tier} value={tier}>
+            Up to {tier}
+          </option>
+        ))}
+        <option value="">No limit</option>
+      </select>
+    </label>
+  )
+}
+
+/**
+ * Schools that asked for a demo on the public site.
+ *
+ * "Start demo" does the whole thing in one go: it creates the organisation,
+ * puts it on a demo plan, and invites the person who asked as its admin. They
+ * accept from their own email and the school is theirs — no separate
+ * onboarding step, and nothing for them to set up first.
+ */
+function DemoRequestQueue({ onOrgCreated }: { onOrgCreated: () => void }) {
+  const { user } = useAuth()
+  const [requests, setRequests] = useState<DemoRequest[] | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [showHandled, setShowHandled] = useState(false)
+
+  const refresh = () =>
+    listDemoRequests()
+      .then(setRequests)
+      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load demo requests.'))
+
+  useEffect(() => {
+    void refresh()
+  }, [])
+
+  async function startDemo(request: DemoRequest) {
+    if (!user) return
+    setBusy(request.id)
+    setError(null)
+    try {
+      // The site admin creates it and is its first admin; the school's own
+      // contact is invited straight in alongside them, so nobody is waiting
+      // on anybody to hand anything over.
+      const org = await createOrganisation(
+        user.uid,
+        { email: user.email, name: user.name },
+        request.organisation,
+        demoPlan(user.uid),
+      )
+      await inviteMember(org.id, request.email, 'admin', user.uid)
+      await setDemoRequestStatus(request.id, 'approved', user.uid, org.id)
+      await refresh()
+      onOrgCreated()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not start that demo.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function mark(request: DemoRequest, status: DemoRequest['status']) {
+    if (!user) return
+    setBusy(request.id)
+    try {
+      await setDemoRequestStatus(request.id, status, user.uid)
+      await refresh()
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const all = requests ?? []
+  // Declined requests are the only ones that drop out of the default view. A
+  // school whose demo has started is still a live conversation, and hiding it
+  // the instant the button is pressed takes away the outcome of the very
+  // action just taken. Delete is how a row leaves for good.
+  const open = all.filter((r) => r.status !== 'declined')
+  const waiting = all.filter((r) => r.status === 'new' || r.status === 'contacted')
+  const shown = showHandled ? all : open
+
+  return (
+    <section className="card card-pad stack gap-3" style={{ marginBottom: 24, maxWidth: 760 }}>
+      <div className="row gap-2" style={{ alignItems: 'baseline' }}>
+        <h2 className="grow" style={{ margin: 0 }}>
+          Demo requests
+        </h2>
+        {waiting.length > 0 && <span className="badge badge-accent">{waiting.length} waiting</span>}
+      </div>
+      <p className="small muted" style={{ marginTop: -8 }}>
+        Schools that filled in the form on the public site. Starting a demo creates the
+        organisation on a {DEMO_SEATS}-student plan and invites them in as its admin.
+      </p>
+
+      {error && <div className="alert alert-error">{error}</div>}
+
+      {requests === null ? (
+        <p className="small muted">Loading…</p>
+      ) : shown.length === 0 ? (
+        <div className="empty" style={{ border: 'none' }}>
+          {all.length === 0 ? 'No school has asked for a demo yet.' : 'Nothing waiting.'}
+        </div>
+      ) : (
+        <div className="stack gap-3">
+          {shown.map((request) => (
+            <div
+              key={request.id}
+              className="stack gap-2"
+              style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}
+            >
+              <div className="row gap-2 wrap" style={{ alignItems: 'baseline' }}>
+                <strong className="grow">{request.organisation}</strong>
+                <span className={`badge ${request.status === 'approved' ? 'badge-good' : 'badge-accent'}`}>
+                  {request.status}
+                </span>
+                <span className="tiny muted">
+                  {new Date(request.createdAt).toLocaleDateString('en-AU')}
+                </span>
+              </div>
+              <div className="small">
+                {request.contactName}
+                {request.role && <span className="muted"> · {request.role}</span>} ·{' '}
+                <a href={`mailto:${request.email}`}>{request.email}</a>
+                {request.students && <span className="muted"> · {request.students} students</span>}
+              </div>
+              {request.message && <p className="small muted">{request.message}</p>}
+              <div className="row gap-2 wrap">
+                {request.orgId ? (
+                  <Link className="btn btn-sm" to={`/organisations/${request.orgId}`}>
+                    Open their organisation
+                  </Link>
+                ) : (
+                  <button
+                    className="btn btn-sm btn-primary"
+                    disabled={busy === request.id}
+                    onClick={() => void startDemo(request)}
+                  >
+                    {busy === request.id ? 'Starting…' : 'Start demo'}
+                  </button>
+                )}
+                {request.status === 'new' && (
+                  <button
+                    className="btn btn-sm"
+                    disabled={busy === request.id}
+                    onClick={() => void mark(request, 'contacted')}
+                  >
+                    Mark contacted
+                  </button>
+                )}
+                {request.status !== 'declined' && !request.orgId && (
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    disabled={busy === request.id}
+                    onClick={() => void mark(request, 'declined')}
+                  >
+                    Decline
+                  </button>
+                )}
+                <button
+                  className="btn btn-sm btn-ghost"
+                  disabled={busy === request.id}
+                  onClick={() => {
+                    if (confirm(`Delete the request from ${request.organisation}?`)) {
+                      void deleteDemoRequest(request.id).then(refresh)
+                    }
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {all.length > open.length && (
+        <button className="btn btn-sm btn-ghost" style={{ alignSelf: 'flex-start' }} onClick={() => setShowHandled((v) => !v)}>
+          {showHandled ? 'Show only what needs attention' : `Show all ${all.length}`}
+        </button>
+      )}
+    </section>
   )
 }
 

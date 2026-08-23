@@ -44,13 +44,9 @@ you get later won't point you back to this page:
 | **Contact email** | Use the role account, then click **Verify** and click the link Google emails. An unverified contact email blocks submission outright. |
 | **Trader status** | Declare **Trader** if you intend to charge schools. This is an EU Digital Services Act requirement and it is mandatory — an undeclared item can't be distributed in the EU. Declaring trader also requires a physical address and phone number, which are shown publicly on the listing. |
 
-**Publisher verification (optional but do it):** while still in **Account**,
-add and verify `pracscriber.com`. It sends you to Google Search Console to
-prove you control the domain — usually a DNS TXT record, which you add in
-Cloudflare the same way you added the A records. Without this, schools see an
-*"unverified publisher"* warning on the listing, which is exactly the wrong
-first impression for something a school is being asked to install on student
-machines.
+Becoming a verified publisher is **not** on this page — it is a field on the
+item, so it comes later, at Step 4b. Nothing about it exists until an item
+does.
 
 ## Step 3 — Create the item and get your extension ID
 
@@ -73,7 +69,7 @@ while review is still running.
 The draft opens with four tabs down the left: **Store listing**, **Privacy
 practices**, **Distribution**, and **Package**.
 
-## Step 4 — Store listing tab
+## Step 4a — Store listing tab
 
 **Product details**
 
@@ -129,6 +125,34 @@ open, one with a search engine open, and one whose extension isn't reporting
 at all. A reviewer assessing "does the single purpose match what it does" can
 answer it from that one image, which is the whole job of the screenshot for
 an extension asking for `tabs`.
+
+## Step 4b — Become a verified publisher
+
+**Where:** the same **Store listing** tab, further down — the **Official URL**
+pull-down.
+
+There is no "verify my account" button anywhere in the Chrome Web Store, and
+looking for one on the Account page is a dead end. Verification happens in a
+different Google product entirely, and the store only reads the result:
+
+1. Next to **Official URL**, click **Add a new site**. It opens **Google
+   Search Console** in a new tab.
+2. Add `pracscriber.com` and verify it. For a domain property that means a
+   **DNS TXT record**, which you add in Cloudflare in the same DNS tab as the
+   A records — type `TXT`, name `@`, content the string Google gives you.
+   Cloudflare's DNS is fast, so verification usually passes within a minute.
+3. Back in the Chrome dashboard, reload and pick `pracscriber.com` from the
+   **Official URL** pull-down. The list only ever contains domains already
+   verified to the signed-in Google account, which is why it is empty before
+   you do step 2.
+
+Use the **same Google account** for Search Console as the developer account,
+or the domain will not appear in the list.
+
+What it changes: the listing shows a linked official URL under the title
+instead of a bare publisher name. Without it, the Details section reads
+*"Offered by: <your publisher name>"* with nothing backing it — a weak signal
+for something a school is being asked to install on student machines.
 
 ## Step 5 — Privacy practices tab
 

@@ -79,7 +79,11 @@ export function OrganisationConsole() {
         isStaff ? listAllClasses(orgId) : listMyClasses(orgId, uid),
         listOrgPapers(orgId),
       ])
-      setOrg(nextOrg)
+      // Keep the last known organisation if a refresh comes back empty. The
+      // dashboard is only rendered while `org` is set, so letting a transient
+      // read blank it tears the whole console down mid-edit — and a dropped
+      // connection is not the same thing as the school ceasing to exist.
+      setOrg((previous) => nextOrg ?? previous)
       setClasses(nextClasses)
       setPapers(nextPapers)
       if (isStaff) {

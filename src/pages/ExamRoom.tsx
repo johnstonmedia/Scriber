@@ -541,6 +541,54 @@ export function ExamRoom() {
     [testId, effectiveRuleProfile, handleMemoryEvents],
   )
 
+  /**
+   * Backspace, the one key that does anything in a live test.
+   *
+   * Typing is gone entirely — a scribe writes what is said, not what is
+   * typed — but a student still needs a way to take a word back without
+   * saying "scratch that" out loud in a silent exam room. It runs the same
+   * command the spoken one does, so there is one implementation and one set
+   * of tests behind both.
+   *
+   * Unlike dictation it does not go through the writer's working memory: a
+   * correction the student made with their own hand should land at once,
+   * rather than a beat later like something they said.
+   */
+  const deleteLastWord = useCallback(() => {
+    const result = applyUtterance(
+      scribeRef.current,
+      'delete last word',
+      effectiveRuleProfile,
+      ++burstRef.current,
+      false,
+    )
+    scribeRef.current = result.state
+    setScribe(result.state)
+    handleEvents(result.events, result.state)
+  }, [effectiveRuleProfile, handleEvents])
+
+  useEffect(() => {
+    if (!isLiveTest) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Backspace') return
+      // The spelling box is a real field and backspace has to work in it
+      // normally — this only claims the key when nothing has focus.
+      const target = event.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return
+      }
+      // Always swallow it, even when it will do nothing: an unhandled
+      // backspace on a page with no focused field can navigate back, which
+      // mid-exam would be its own disaster.
+      event.preventDefault()
+      if (phaseRef.current !== 'working' || paused || markedAbsent) return
+      deleteLastWord()
+      toast('Deleted last word')
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isLiveTest, paused, markedAbsent, deleteLastWord, toast])
+
   // A test hook for driving the writer's long timers without waiting them out.
   useEffect(() => {
     if (!import.meta.env.DEV) return
@@ -1016,6 +1064,7 @@ export function ExamRoom() {
                   {screenStream ? 'Screen shared' : 'Screen not shared'}
                 </span>
                 <span className="badge">Close every other tab and app</span>
+                <span className="badge">Backspace deletes your last word</span>
               </div>
               {!supported && (
                 <p className="small" style={{ color: 'var(--live)' }}>

@@ -108,17 +108,13 @@ export function Organisations() {
     setError(null)
     try {
       const org = await createOrganisation(user.uid, { email: user.email, name: user.name }, name)
-      // Claimed after creation rather than as part of it: uniqueness lives in
-      // its own collection, and a subdomain somebody else already holds
-      // should not cost you the organisation you just made. It can be changed
-      // later in Settings either way.
-      await setOrgSlug(org.id, wanted).catch((err) => {
-        setError(
-          err instanceof Error
-            ? `${org.name} was created, but its web address wasn't: ${err.message}`
-            : 'The organisation was created without a web address.',
-        )
-      })
+      // The address is claimed separately and deliberately not waited on.
+      // Uniqueness lives in its own collection, so a name somebody else holds
+      // must not cost you the organisation you just made — and neither must a
+      // slow write: the organisation exists, and an address that fails to
+      // stick is a field in Settings, not a reason to leave somebody looking
+      // at a spinner.
+      void setOrgSlug(org.id, wanted).catch(() => undefined)
       await refreshMemberships()
       navigate(`/organisations/${org.id}`)
     } catch (err) {

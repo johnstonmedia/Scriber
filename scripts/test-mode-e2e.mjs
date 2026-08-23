@@ -38,8 +38,41 @@ const ORG_NAME = `Test Mode School ${stamp}`
 async function newPage() {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
   const page = await context.newPage()
+  // A controllable stand-in for the Web Speech API, so a student can actually
+  // dictate in this suite without a microphone.
+  await context.addInitScript(() => {
+    class FakeRecognition {
+      start() {
+        this.onstart?.()
+      }
+      stop() {
+        this.onend?.()
+      }
+      abort() {}
+      say(text) {
+        this.onresult?.({
+          resultIndex: 0,
+          results: { length: 1, 0: { isFinal: true, length: 1, 0: { transcript: text, confidence: 1 } } },
+        })
+      }
+    }
+    window.SpeechRecognition = class {
+      constructor() {
+        const instance = new FakeRecognition()
+        window.__fakeRecognition = instance
+        return instance
+      }
+    }
+  })
   page.on('pageerror', (e) => console.log('PAGEERROR:', e.message))
   return page
+}
+
+/** Dictate a phrase through the fake recogniser and wait for it to land. */
+async function dictate(page, text) {
+  await page.getByRole('button', { name: 'Start dictating' }).click()
+  await page.waitForFunction(() => !!window.__fakeRecognition, null, { timeout: 10000 })
+  await page.evaluate((phrase) => window.__fakeRecognition.say(phrase), text)
 }
 
 async function signUp(page, email, name) {
@@ -195,10 +228,14 @@ await teacherPage.getByLabel('File (PDF or text)').setInputFiles({
   ),
 })
 await teacherPage.getByRole('button', { name: 'Create test' }).click()
-await teacherPage.waitForSelector('text=Live trial test', { timeout: 20000 })
+// The uploaded paper takes the test's title, so a bare text match also hits
+// the <option> in the Paper select. The Monitor link only exists on a real
+// test row, so it's the honest signal that the test was created.
+const monitorLink = teacherPage.getByRole('link', { name: 'Monitor' }).first()
+await monitorLink.waitFor({ state: 'visible', timeout: 20000 })
 console.log('test created, with a paper uploaded during setup')
 
-await teacherPage.getByRole('link', { name: 'Monitor' }).click()
+await monitorLink.click()
 await teacherPage.waitForSelector('text=Waiting room', { timeout: 10000 })
 const testId = teacherPage.url().split('/tests/')[1]
 console.log('teacher on monitor:', testId)
@@ -312,6 +349,32 @@ await teacherPage
   .click()
 await studentAPage.waitForSelector('.mic-button', { timeout: 20000 })
 console.log('the teacher resumed student A')
+
+// ---------------------------------------------- 9a. backspace takes a word back
+//
+// Typing is gone in a live test, but a student still needs to take a word
+// back without saying "scratch that" out loud in a silent room. It runs the
+// same command the spoken one does.
+
+await dictate(studentAPage, 'the poem resists an easy reading')
+await studentAPage.waitForFunction(
+  () => /reading/.test(document.querySelector('.answer-sheet')?.textContent ?? ''),
+  null,
+  { timeout: 20000 },
+)
+const beforeBackspace = await studentAPage.locator('.answer-sheet').innerText()
+await studentAPage.locator('body').press('Backspace')
+await studentAPage.waitForFunction(
+  (before) => (document.querySelector('.answer-sheet')?.textContent ?? '') !== before,
+  beforeBackspace,
+  { timeout: 10000 },
+)
+const afterBackspace = await studentAPage.locator('.answer-sheet').innerText()
+const words = (text) => text.trim().split(/\s+/).filter(Boolean).length
+if (words(afterBackspace) >= words(beforeBackspace)) {
+  throw new Error(`backspace did not remove a word: "${beforeBackspace}" -> "${afterBackspace}"`)
+}
+console.log('backspace deleted the last word')
 
 // ------------------------------------------------- 9b. taking the roll
 //

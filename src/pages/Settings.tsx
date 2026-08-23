@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAuth, type Settings as SettingsShape } from '../lib/auth'
 import { CommandList } from '../components/CommandReference'
 import { readAloud } from '../scribe/speech'
 import { MEMORY_PRESETS, type MemoryPreset } from '../scribe/workingMemory'
 import { RULE_PROFILES } from '../lib/ruleProfile'
 import { auth } from '../lib/firebase'
-import { extensionInstalled, requestPairingCode } from '../lib/examExtension'
+import { extensionInstalled, pairExtension, requestPairingCode } from '../lib/examExtension'
+import { DEFAULT_CONTENT, subscribeSiteConfig } from '../lib/siteConfig'
 
 export function Settings() {
   const { user, settings, saveSettings, updateName } = useAuth()
@@ -257,15 +258,38 @@ function ExamSupervision() {
   const { user, memberships } = useAuth()
   const [code, setCode] = useState<string | null>(null)
   const [expiresAt, setExpiresAt] = useState(0)
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState<'pair' | 'code' | null>(null)
+  const [paired, setPaired] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showCode, setShowCode] = useState(false)
+  const [storeUrl, setStoreUrl] = useState(DEFAULT_CONTENT.extensionUrl)
   const installed = extensionInstalled()
+
+  useEffect(() => subscribeSiteConfig((config) => setStoreUrl(config.content.extensionUrl)), [])
 
   if (memberships.length === 0) return null
 
+  /** The normal path: the page is signed in, so nobody types anything. */
+  async function pairNow() {
+    if (!user) return
+    setBusy('pair')
+    setError(null)
+    try {
+      const token = await auth.currentUser?.getIdToken()
+      if (!token) throw new Error('Sign in again to pair the extension.')
+      await pairExtension(token)
+      setPaired(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not pair the extension.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  /** The fallback: the extension is in a browser this account isn't signed in on. */
   async function generate() {
     if (!user) return
-    setBusy(true)
+    setBusy('code')
     setError(null)
     try {
       const token = await auth.currentUser?.getIdToken()
@@ -276,7 +300,7 @@ function ExamSupervision() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not generate a code.')
     } finally {
-      setBusy(false)
+      setBusy(null)
     }
   }
 
@@ -296,38 +320,90 @@ function ExamSupervision() {
         </span>
       </div>
 
-      {code ? (
+      {paired ? (
+        <p className="small">
+          <strong>Paired.</strong> Nothing else to do — the extension will report to your
+          supervisor while a test is running, and at no other time.
+        </p>
+      ) : !installed ? (
         <div className="stack gap-2">
-          <div className="field" style={{ maxWidth: 260 }}>
-            <label>Type this into the extension</label>
-            <div
-              style={{
-                fontFamily: 'ui-monospace, Menlo, monospace',
-                fontSize: '1.6rem',
-                letterSpacing: '0.14em',
-                fontWeight: 600,
-              }}
-            >
-              {code}
-            </div>
-          </div>
-          <p className="small muted">
-            Good for {Math.max(0, Math.round((expiresAt - Date.now()) / 60000))} more minutes, and
-            works once.
+          <p className="small muted" style={{ margin: 0 }}>
+            Install the extension in this browser first, then come back here. It has to be in the
+            same browser you sit the test in.
           </p>
-          <button className="btn btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => void generate()}>
-            Generate another
-          </button>
+          <a
+            className="btn btn-primary btn-sm"
+            style={{ alignSelf: 'flex-start' }}
+            href={storeUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Get the extension
+          </a>
         </div>
       ) : (
-        <button
-          className="btn btn-primary"
-          style={{ alignSelf: 'flex-start' }}
-          disabled={busy}
-          onClick={() => void generate()}
-        >
-          {busy ? 'Generating…' : 'Generate a pairing code'}
-        </button>
+        <div className="stack gap-3">
+          <button
+            className="btn btn-primary"
+            style={{ alignSelf: 'flex-start' }}
+            disabled={busy !== null}
+            onClick={() => void pairNow()}
+          >
+            {busy === 'pair' ? 'Pairing…' : 'Pair this extension'}
+          </button>
+
+          {!showCode ? (
+            <button
+              className="btn btn-sm btn-ghost"
+              style={{ alignSelf: 'flex-start' }}
+              onClick={() => setShowCode(true)}
+            >
+              Pairing a different browser?
+            </button>
+          ) : code ? (
+            <div className="stack gap-2">
+              <div className="field" style={{ maxWidth: 260 }}>
+                <label>Type this into the extension</label>
+                <div
+                  style={{
+                    fontFamily: 'ui-monospace, Menlo, monospace',
+                    fontSize: '1.6rem',
+                    letterSpacing: '0.14em',
+                    fontWeight: 600,
+                  }}
+                >
+                  {code}
+                </div>
+              </div>
+              <p className="small muted">
+                Good for {Math.max(0, Math.round((expiresAt - Date.now()) / 60000))} more minutes,
+                and works once.
+              </p>
+              <button
+                className="btn btn-sm"
+                style={{ alignSelf: 'flex-start' }}
+                onClick={() => void generate()}
+              >
+                Generate another
+              </button>
+            </div>
+          ) : (
+            <div className="stack gap-2">
+              <p className="small muted" style={{ margin: 0 }}>
+                Use this only if the extension is in a browser you aren't signed in on. Open the
+                extension there and type the code in.
+              </p>
+              <button
+                className="btn btn-sm"
+                style={{ alignSelf: 'flex-start' }}
+                disabled={busy !== null}
+                onClick={() => void generate()}
+              >
+                {busy === 'code' ? 'Generating…' : 'Generate a pairing code'}
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       {error && (

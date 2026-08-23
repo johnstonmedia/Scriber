@@ -27,6 +27,7 @@ export type ErrorCode =
   | 'SCR-400'
   | 'SCR-401'
   | 'SCR-410'
+  | 'SCR-420'
   | 'SCR-500'
   | 'SCR-900'
 
@@ -43,6 +44,8 @@ const CAUSES: Record<ErrorCode, string> = {
   'SCR-400': 'Test session write failed — teacher role missing, or rules not deployed.',
   'SCR-401': 'Test paper unreadable. Expected before the teacher starts the test; a real fault if the test is running.',
   'SCR-410': 'Integrity alert could not be written — the alerts rule is missing or the student is no longer a member.',
+  'SCR-420':
+    'Extension pairing failed server-side. Almost always FIREBASE_SERVICE_ACCOUNT missing or malformed on the deployment, so requireUser cannot verify the ID token.',
   'SCR-500': 'A practice session could not be saved — Firestore unreachable or offline.',
   'SCR-900': 'Unclassified failure. Check the console trace attached to the report.',
 }

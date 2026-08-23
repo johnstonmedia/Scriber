@@ -617,6 +617,21 @@ function SiteContentEditor() {
         />
       </div>
 
+      <div className="field">
+        <label htmlFor="scExtension">Extension install link</label>
+        <input
+          id="scExtension"
+          className="input"
+          value={value.extensionUrl}
+          onChange={(e) => edit({ extensionUrl: e.target.value })}
+        />
+        <p className="small muted" style={{ marginTop: 6 }}>
+          Where "Get the extension" sends people. Paste the Chrome Web Store URL the day the
+          listing is approved — until then it falls back to a store search, which mostly finds
+          nothing. See extension/STORE-LISTING.md.
+        </p>
+      </div>
+
       <div className="field" style={{ maxWidth: 260 }}>
         <label htmlFor="scCta">Main button</label>
         <input

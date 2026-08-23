@@ -17,7 +17,9 @@
     "api": "tsx scripts/api-dev.mjs",
     "test:extension": "node scripts/extension-e2e.mjs",
     "test:seats": "node scripts/demo-seats-e2e.mjs",
-    "test:mode": "node scripts/test-mode-e2e.mjs"
+    "test:mode": "node scripts/test-mode-e2e.mjs",
+    "build:extension": "node scripts/build-extension.mjs",
+    "test:pair": "node scripts/extension-pair-e2e.mjs"
   },
   "dependencies": {
     "firebase": "^12.17.1",

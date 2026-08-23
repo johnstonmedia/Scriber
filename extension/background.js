@@ -108,6 +108,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     void paintBadge(false)
     return false
   }
+  // The signed-in page pairing this extension directly, with no typed code.
+  // The token is stored exactly as the popup's own pairing stores it — it is
+  // the same token, obtained the same way, just without a human relaying six
+  // characters between two panels.
+  if (message?.type === 'pair' && typeof message.token === 'string') {
+    void (async () => {
+      await chrome.storage.local.set({ [TOKEN_KEY]: message.token })
+      await paintBadge(false)
+      sendResponse({ paired: true })
+    })()
+    return true
+  }
   return false
 })
 

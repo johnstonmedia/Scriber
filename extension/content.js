@@ -36,6 +36,23 @@ window.addEventListener('message', (event) => {
       origin: window.location.origin,
     })
   }
+
+  // Pairing without a typed code: the page is already signed in, so it mints
+  // the token itself and hands it over here. Only a Scriber origin runs this
+  // script at all — see the manifest's matches — so the token can only ever
+  // arrive from a page that could have obtained one anyway.
+  if (data.type === 'pair' && typeof data.token === 'string') {
+    chrome.runtime.sendMessage(
+      { type: 'pair', token: data.token, origin: window.location.origin },
+      () => {
+        // Fires even on failure; the page's own timeout is what distinguishes
+        // "the worker never answered" from "paired".
+        if (!chrome.runtime.lastError) {
+          window.dispatchEvent(new CustomEvent('scriber:paired'))
+        }
+      },
+    )
+  }
 })
 
 // The page asks whether a token is paired; the popup is where pairing

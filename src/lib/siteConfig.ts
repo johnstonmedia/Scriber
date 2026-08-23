@@ -28,6 +28,12 @@ export type SiteContent = {
   ctaLabel: string
   /** Shown across the top of every page when set — outages, term dates, notices. */
   banner: string
+  /**
+   * Where "Get the extension" sends people. Lives here rather than in the
+   * source because the Chrome Web Store only issues the real URL once the
+   * listing is approved, and that day should not need a deploy.
+   */
+  extensionUrl: string
 }
 
 export type SiteConfig = {
@@ -43,6 +49,9 @@ export const DEFAULT_CONTENT: SiteContent = {
     'Scriber acts as your writer. It writes exactly what you say — nothing more — and it behaves like a real person: a beat of lag, a limited memory, and the occasional “how do you spell that?” It’s the only way to practise the pace an exam actually demands.',
   ctaLabel: 'Start practising free',
   banner: '',
+  // A search, until the listing exists. Honest but poor — see
+  // extension/STORE-LISTING.md.
+  extensionUrl: 'https://chromewebstore.google.com/search/scriber',
 }
 
 export const DEFAULT_SITE_CONFIG: SiteConfig = {
@@ -73,6 +82,7 @@ export function subscribeSiteConfig(cb: (config: SiteConfig) => void): Unsubscri
           // The banner is the one field where blank is a real choice — it
           // means "no notice today" rather than "fall back to the default".
           banner: typeof content.banner === 'string' ? content.banner : '',
+          extensionUrl: text(content.extensionUrl, DEFAULT_CONTENT.extensionUrl),
         },
       })
     },

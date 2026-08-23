@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import { extensionInstalled } from '../lib/examExtension'
+import { DEFAULT_CONTENT, subscribeSiteConfig } from '../lib/siteConfig'
 
 const DISMISSED_KEY = 'scriber-extension-prompt-dismissed'
 
@@ -21,6 +22,11 @@ const DISMISSED_KEY = 'scriber-extension-prompt-dismissed'
 export function ExtensionPrompt() {
   const { memberships } = useAuth()
   const [dismissed, setDismissed] = useState(true)
+  // Set by a site admin the day the store listing is approved — see
+  // extension/STORE-LISTING.md.
+  const [storeUrl, setStoreUrl] = useState(DEFAULT_CONTENT.extensionUrl)
+
+  useEffect(() => subscribeSiteConfig((config) => setStoreUrl(config.content.extensionUrl)), [])
 
   useEffect(() => {
     try {
@@ -46,7 +52,7 @@ export function ExtensionPrompt() {
       <div className="extension-prompt-actions">
         <a
           className="btn btn-primary btn-sm"
-          href="https://chromewebstore.google.com/search/scriber"
+          href={storeUrl}
           target="_blank"
           rel="noopener noreferrer"
         >

@@ -29,9 +29,10 @@ import {
   type OrgRole,
 } from '../lib/org'
 import { ClassTests } from '../components/ClassTests'
+import { OrgHome } from '../components/OrgHome'
 import { OrgAdminDashboard } from './OrgAdminDashboard'
 
-type Tab = 'papers' | 'classes' | 'members' | 'tests'
+type Tab = 'home' | 'papers' | 'classes' | 'members' | 'tests'
 
 /**
  * One console, adapted to whoever is looking at it. A student sees their
@@ -54,7 +55,9 @@ export function OrganisationConsole() {
   const isAdmin = role === 'admin'
 
   const [org, setOrg] = useState<Organisation | null>(null)
-  const [tab, setTab] = useState<Tab>('papers')
+  // The school's own page opens first: what's coming, what already happened,
+  // and how this school marks — before the filing cabinets.
+  const [tab, setTab] = useState<Tab>('home')
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
@@ -244,6 +247,9 @@ export function OrganisationConsole() {
       {notice && <div className="alert alert-info" style={{ marginBottom: 16 }}>{notice}</div>}
 
       <div className="row gap-2 wrap" style={{ marginBottom: 22 }}>
+        <button className={`btn btn-sm ${tab === 'home' ? 'btn-primary' : ''}`} onClick={() => setTab('home')}>
+          {org?.name ?? membership?.orgName ?? 'Organisation'}
+        </button>
         <button className={`btn btn-sm ${tab === 'papers' ? 'btn-primary' : ''}`} onClick={() => setTab('papers')}>
           Papers
         </button>
@@ -259,6 +265,18 @@ export function OrganisationConsole() {
           Tests
         </button>
       </div>
+
+      {tab === 'home' && org && user && (
+        <OrgHome
+          org={org}
+          orgId={orgId}
+          uid={user.uid}
+          classes={myClasses}
+          papers={papers}
+          isStaff={isStaff}
+          onOpenTab={setTab}
+        />
+      )}
 
       {tab === 'papers' && (
         <div className="stack gap-4">

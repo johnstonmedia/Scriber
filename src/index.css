@@ -1142,6 +1142,29 @@ textarea.input {
   .home-steps-line::after { transition: none; }
 }
 
+/* A school's own page inside the console. Rows read as a list, not a table:
+   the label carries the meaning, so the value can stay unaligned. */
+.org-home-row {
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.org-home-row:first-child { border-top: none; padding-top: 0; }
+
+.org-home-rules {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px 20px;
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.org-home-rule {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 /* How much of a school's licence is used. Reads as a fact, not a warning,
    until it actually is one. */
 .seat-meter {

@@ -414,5 +414,26 @@ await studentBPage.waitForURL(/\/sessions\/.+/, { timeout: 20000 })
 console.log("student B (still working, never clicked Finish) was moved to their session review when the teacher ended the test")
 await shot(studentBPage, '03-student-b-ended')
 
+// --------------------------------------- 8. the school's own page afterwards
+//
+// A finished test has to show up on the student's school page with what they
+// actually produced — otherwise "past assessments" is just a list of titles.
+
+await studentAPage.goto(`http://localhost:5173/organisations/${orgId}`, { waitUntil: 'domcontentloaded' })
+await studentAPage.waitForSelector('text=Past assessments', { timeout: 20000 })
+const pastSection = studentAPage.locator('section').filter({ hasText: 'Past assessments' })
+await pastSection.locator('text=Live trial test').waitFor({ state: 'visible', timeout: 20000 })
+const pastRow = await pastSection.innerText()
+if (!/\d+ words?/.test(pastRow)) {
+  throw new Error(`expected the student's own word count on their past assessment, saw: ${pastRow}`)
+}
+console.log("the finished test is on student A's school page, with what they wrote")
+
+// The rules the school runs by belong on the same page, in plain words.
+await studentAPage.waitForSelector('text=Backspace', { timeout: 10000 })
+await studentAPage.waitForSelector('text=only your supervisor can pause or resume you', { timeout: 10000 })
+console.log("the school's test rules are stated on its own page")
+await shot(studentAPage, '04-org-home')
+
 console.log('\nALL TEST-MODE E2E STEPS PASSED')
 await browser.close()

@@ -330,6 +330,50 @@ export function subscribeUpcomingTests(
   return () => unsubs.forEach((unsub) => unsub())
 }
 
+/**
+ * Every test across the classes somebody belongs to in ONE organisation, at
+ * any phase — the school's own page needs the finished ones as much as the
+ * upcoming, which is the one thing subscribeUpcomingTests deliberately drops.
+ *
+ * Firestore's 'in' takes at most 30 values, so a student in more classes than
+ * that sees their first thirty. That is not a real roster shape, but silently
+ * returning nothing would be worse than saying so here.
+ */
+export function subscribeOrgTests(
+  orgId: string,
+  classIds: string[],
+  cb: (tests: TestSession[]) => void,
+): Unsubscribe {
+  if (classIds.length === 0) {
+    cb([])
+    return () => undefined
+  }
+  const q = query(testsRef(orgId), where('classId', 'in', classIds.slice(0, 30)))
+  return onSnapshot(
+    q,
+    (snapshot) =>
+      cb(
+        snapshot.docs
+          .map(toTestSession)
+          // Ordered here rather than in the query: adding an orderBy to an
+          // 'in' filter needs its own composite index, and this list is small
+          // enough that sorting it in the browser costs nothing.
+          .sort((a, b) => (b.scheduledAt ?? Date.parse(b.createdAt)) - (a.scheduledAt ?? Date.parse(a.createdAt))),
+      ),
+    () => cb([]),
+  )
+}
+
+/** One student's own row on a finished test — what they actually produced. */
+export async function getMyParticipant(
+  orgId: string,
+  testId: string,
+  uid: string,
+): Promise<TestParticipant | null> {
+  const snapshot = await getDoc(participantDoc(orgId, testId, uid))
+  return snapshot.exists() ? toTestParticipant(snapshot as QueryDocumentSnapshot<DocumentData>) : null
+}
+
 export function subscribeTestSession(
   orgId: string,
   testId: string,

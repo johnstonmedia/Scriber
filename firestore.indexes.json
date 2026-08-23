@@ -17,14 +17,6 @@
       ]
     },
     {
-      "collectionGroup": "invites",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "role", "order": "ASCENDING" },
-        { "fieldPath": "status", "order": "ASCENDING" }
-      ]
-    },
-    {
       "collectionGroup": "joinRequests",
       "queryScope": "COLLECTION",
       "fields": [

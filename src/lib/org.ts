@@ -542,12 +542,21 @@ export async function getSeatUsage(orgId: string, plan?: OrgPlan): Promise<SeatU
   // compare them against, and this runs on every invite screen.
   if (resolved.studentSeats === null) return seatUsage(resolved, 0, 0)
   const [members, invites] = await Promise.all([
+    // One equality filter, which Firestore's automatic single-field index
+    // already serves — no composite index to create, and nothing that can
+    // fail in production while passing here.
     getCountFromServer(query(membersRef(orgId), where('role', '==', 'student'))),
-    getCountFromServer(
-      query(invitesRef(orgId), where('role', '==', 'student'), where('status', '==', 'pending')),
-    ),
+    // Pending invites are read and filtered by role in memory rather than
+    // counted with a second equality filter on the server. A two-filter count
+    // would need a composite index, and the emulator never enforces a missing
+    // one — so that class of mistake only ever surfaces in production, on a
+    // path that decides whether a school can add a student. The documents are
+    // bounded by the licence (150 at the very top tier), so reading them
+    // costs nothing worth having that risk for.
+    getDocs(query(invitesRef(orgId), where('status', '==', 'pending'))),
   ])
-  return seatUsage(resolved, members.data().count, invites.data().count)
+  const reserved = invites.docs.filter((d) => d.data().role === 'student').length
+  return seatUsage(resolved, members.data().count, reserved)
 }
 
 /**

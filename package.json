@@ -19,7 +19,8 @@
     "test:seats": "node scripts/demo-seats-e2e.mjs",
     "test:mode": "node scripts/test-mode-e2e.mjs",
     "build:extension": "node scripts/build-extension.mjs",
-    "test:pair": "node scripts/extension-pair-e2e.mjs"
+    "test:pair": "node scripts/extension-pair-e2e.mjs",
+    "store:shots": "node scripts/store-screenshots.mjs"
   },
   "dependencies": {
     "firebase": "^12.17.1",

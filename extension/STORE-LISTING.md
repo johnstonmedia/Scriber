@@ -1,73 +1,91 @@
 # Publishing the Scriber extension
 
-Everything the Chrome Web Store asks for, written out. Build the upload with:
+A click-by-click walkthrough, in the order you'll actually do it. Everything
+the Chrome Web Store asks for is written out below to paste.
+
+Build the upload first:
 
 ```
-node scripts/build-extension.mjs
+npm run build:extension     # → dist-extension/scriber-extension-1.0.0.zip
+npm run store:shots         # → dist-extension/store/01-supervisor-monitor.png
 ```
 
-That produces `dist-extension/scriber-extension-<version>.zip` with the
-development host stripped out. Never upload `extension/` directly — it lists
-`http://localhost:5173`, and a reviewer reads that as an extension that talks
-to whatever happens to be running on their own machine.
+**Never upload `extension/` itself.** Its manifest lists
+`http://localhost:5173` so the content script runs against the dev server,
+and a reviewer reads that as an extension that talks to whatever happens to
+be running on their own machine. The build strips it.
 
-## Before the first upload
+---
 
-1. A Google account you're willing to have permanently attached to the
-   listing. Use a role account (`support@pracscriber.com`), not a personal
-   one — the developer account cannot be transferred later without support
-   involvement.
-2. A one-off **US$5** registration fee at
-   <https://chrome.google.com/webstore/devconsole>.
-3. Verify the publisher: the store shows an "unverified publisher" warning
-   otherwise, which is not what you want on an extension a school is being
-   asked to trust. Verification means proving you control `pracscriber.com`
-   in Google Search Console, then linking it in the developer account.
+## Step 1 — Register (once, ~10 minutes, US$5)
 
-## Visibility — pick this deliberately
+**Where:** <https://chrome.google.com/webstore/devconsole>
 
-| Setting | Who can install | When it fits |
-| --- | --- | --- |
-| **Public** | Anyone, appears in search | Once you want schools finding it on their own |
-| **Unlisted** | Anyone with the link | **Start here.** Same install flow, no store search presence while you're still shipping changes weekly |
-| **Private** | One Google Workspace domain | Only useful if you're publishing on a school's behalf |
+1. Sign in with the Google account that will own this listing forever. Use a
+   role account — `support@pracscriber.com` — not your personal one. The
+   developer account cannot be transferred later without going through Google
+   support, and a listing stranded on a personal account is a real problem the
+   day someone else runs the business.
+2. Accept the Developer Agreement.
+3. Pay the **one-off US$5** registration fee. Card details go to Google
+   Payments; there's no subscription and no per-item cost.
+4. You land on an empty **Items** page.
 
-Unlisted still goes through full review, and still gives you a permanent
-extension ID and a real install link to put in Scriber. The only thing it
-costs you is store search traffic, which is worth nothing while there is one
-school on the platform.
+## Step 2 — Fill in the account, before you touch the item
 
-## For schools running managed Chromebooks
+**Where:** left sidebar → **Account**
 
-This is worth telling every school you demo to, because it turns installation
-from a per-student instruction into an administrator's afternoon:
+Three things here block publication if you skip them, and the error messages
+you get later won't point you back to this page:
 
-> Google Admin console → Devices → Chrome → Apps & extensions → Users &
-> browsers → select the student OU → add by extension ID → set to **Force
-> install**.
+| Field | What to do |
+| --- | --- |
+| **Publisher name** | `Johnston Media` or `Scriber` — shown under the extension's title on the listing |
+| **Contact email** | Use the role account, then click **Verify** and click the link Google emails. An unverified contact email blocks submission outright. |
+| **Trader status** | Declare **Trader** if you intend to charge schools. This is an EU Digital Services Act requirement and it is mandatory — an undeclared item can't be distributed in the EU. Declaring trader also requires a physical address and phone number, which are shown publicly on the listing. |
 
-Force-installed extensions cannot be removed by the student, which is exactly
-the property a supervised assessment wants. Give the school the extension ID
-once you have it.
+**Publisher verification (optional but do it):** while still in **Account**,
+add and verify `pracscriber.com`. It sends you to Google Search Console to
+prove you control the domain — usually a DNS TXT record, which you add in
+Cloudflare the same way you added the A records. Without this, schools see an
+*"unverified publisher"* warning on the listing, which is exactly the wrong
+first impression for something a school is being asked to install on student
+machines.
 
-## Listing fields
+## Step 3 — Create the item and get your extension ID
 
-**Name**
+**Where:** **Items** → **+ New Item** (top right)
 
-```
-Scriber Exam Supervision
-```
+1. Drag in `dist-extension/scriber-extension-1.0.0.zip`.
+2. Upload. Google unpacks it and creates a **draft**.
 
-**Short description** (132 characters max — the manifest's `description`)
+**You now have the permanent extension ID, before review.** Look at the
+address bar:
 
 ```
-Lets a supervisor see which other tabs are open during a Scriber exam, and puts practice one click away the rest of the time.
+https://chrome.google.com/webstore/devconsole/<publisher>/<EXTENSION-ID>/edit
 ```
 
-**Category**: Education
-**Language**: English (Australia)
+That 32-character lowercase string is the ID. It never changes across
+updates. Copy it now — a school can start setting up force-install with it
+while review is still running.
 
-**Detailed description**
+The draft opens with four tabs down the left: **Store listing**, **Privacy
+practices**, **Distribution**, and **Package**.
+
+## Step 4 — Store listing tab
+
+**Product details**
+
+| Field | Value |
+| --- | --- |
+| Title | `Scriber Exam Supervision` |
+| Summary | Pre-filled from the manifest — 132 characters max |
+| Description | The long block below |
+| Category | **Education** |
+| Language | **English (Australia)** |
+
+Description to paste:
 
 ```
 Scriber Exam Supervision is for students sitting a supervised practice exam on Scriber, and for the teachers supervising them.
@@ -95,38 +113,63 @@ A Scriber account that belongs to a school or organisation. Personal Scriber acc
 Scriber is an independent practice tool for students with a writer or scribe exam provision. It is not affiliated with or endorsed by NESA.
 ```
 
-## Privacy tab — the part that gets submissions rejected
+**Graphics** — the store will not let you submit without the first two:
 
-**Single purpose** (one sentence, and they mean one)
+| Asset | Size | Where it comes from |
+| --- | --- | --- |
+| Store icon | 128×128 PNG | `extension/icons/icon-128.png` |
+| Screenshot (≥1, ≤5) | 1280×800 PNG | `dist-extension/store/01-supervisor-monitor.png` |
+| Small promo tile | 440×280 PNG | Optional — only used if Google features you |
+| Marquee | 1400×560 PNG | Optional, same |
+
+`npm run store:shots` generates the screenshot from the real supervisor
+monitor against seeded demo data — invented names, never a real student. It
+shows all three states side by side on purpose: a student with only Scriber
+open, one with a search engine open, and one whose extension isn't reporting
+at all. A reviewer assessing "does the single purpose match what it does" can
+answer it from that one image, which is the whole job of the screenshot for
+an extension asking for `tabs`.
+
+## Step 5 — Privacy practices tab
+
+**This is where submissions actually stall.** Every field is required and
+vague answers get bounced.
+
+**Single purpose** — one sentence, and they mean one:
 
 ```
 Report which browser tabs are open to the supervisor of a Scriber exam, while that exam is running.
 ```
 
-**Permission justifications** — each of these is a required free-text field:
+**Permission justifications** — a free-text box per permission:
 
-| Permission | Justification to paste |
+| Permission | Paste this |
 | --- | --- |
 | `tabs` | Reading tab titles and hostnames is the extension's entire purpose: a supervisor needs to know whether a student sitting a supervised exam has opened another site. A web page cannot access this. Titles and hostnames only are read, never full URLs, and only while an exam is in progress. |
 | `storage` | Stores the pairing token that identifies which Scriber student this browser belongs to, and the ID of the exam currently in progress. The exam ID is kept in session storage and is discarded when the browser closes. |
 | `alarms` | A 30-second heartbeat during an exam, so a supervisor can tell the difference between a student who has done nothing and an extension that has stopped running. |
-| `host_permissions` (`https://*.pracscriber.com/*`) | The extension communicates only with Scriber's own servers, to receive the start and end of an exam from the Scriber page and to send tab reports back. It runs on no other site. |
-| Remote code | **No.** All code is contained in the package. |
+| Host permission (`https://*.pracscriber.com/*`) | The extension communicates only with Scriber's own servers, to receive the start and end of an exam from the Scriber page and to send tab reports back. It runs on no other site. |
 
-**Data usage disclosures** — tick these and nothing else:
+**Are you using remote code?** → **No, I am not using remote code.** True —
+everything is in the package, there is no `eval` and nothing is fetched and
+executed.
 
-- Collects **Website content**: yes — tab titles and hostnames, during an exam.
-- Collects **Authentication information**: yes — the pairing token.
-- Everything else (personally identifiable information, health, financial,
-  location, personal communications, user activity beyond the above): **no**.
+**Data usage** — tick exactly these and nothing else:
 
-Then confirm all three certifications:
+- ☑ **Website content** — tab titles and hostnames, during an exam
+- ☑ **Authentication information** — the pairing token
+- ☐ Personally identifiable information
+- ☐ Health, financial, location, personal communications
+- ☐ User activity (this means analytics and clickstream; we collect none)
 
-- Data is not sold to third parties.
-- Data is not used or transferred for purposes unrelated to the item's single
-  purpose.
-- Data is not used or transferred to determine creditworthiness or for
-  lending.
+Then tick all three certifications:
+
+- ☑ I do not sell or transfer user data to third parties, outside of the
+  approved use cases
+- ☑ I do not use or transfer user data for purposes that are unrelated to my
+  item's single purpose
+- ☑ I do not use or transfer user data to determine creditworthiness or for
+  lending purposes
 
 **Privacy policy URL**
 
@@ -134,45 +177,90 @@ Then confirm all three certifications:
 https://pracscriber.com/privacy
 ```
 
-That page must describe the extension's data handling specifically, or review
-will bounce it. It does — see `src/pages/Privacy.tsx`.
+That page must be live and must describe the extension specifically, or
+review bounces it. It does — `src/pages/Privacy.tsx` has a dedicated *"The
+extension"* section covering what it reads, when, and how to unpair.
 
-## Graphics you have to supply
+## Step 6 — Distribution tab
 
-| Asset | Size | Required |
+| Setting | Choose |
+| --- | --- |
+| Payments | **Free** |
+| Visibility | **Unlisted** (see below) |
+| Distribution regions | All, unless you have a reason |
+
+**Visibility — pick this deliberately:**
+
+| Option | Who can install | When it fits |
 | --- | --- | --- |
-| Store icon | 128×128 PNG | Yes — `extension/icons/icon-128.png` |
-| Screenshot | 1280×800 or 640×400 PNG | Yes, at least one |
-| Small promo tile | 440×280 PNG | Only for featuring |
+| **Public** | Anyone, appears in store search | Once schools should be finding it on their own |
+| **Unlisted** | Anyone with the link | **Start here** |
+| **Private** | One Google Workspace domain | Only if publishing on a single school's behalf |
 
-For the screenshot, the most honest one is the supervisor's monitor view with
-a student's tab list showing — it demonstrates the single purpose in one
-image, which is exactly what a reviewer is looking for. Take it at 1280×800
-against demo data, never a real student's name.
+Unlisted still gets full review, a permanent ID, and a real install link to
+put in Scriber. The only thing it costs is store search traffic, which is
+worth nothing while there's one school on the platform — and it means you're
+not shipping weekly changes to a publicly listed product. Switch to Public
+later from this same tab; it's a one-click change.
 
-## After it is approved
+## Step 7 — Submit
 
-Review usually takes a few days; extensions requesting `tabs` are more often
-pulled for a manual look, so allow a week for the first submission.
+**Where:** **Submit for review** (top right)
 
-Once it is live you get a permanent extension ID and a URL like:
+Choose **publish immediately after review passes**, unless you want to hold
+it until a specific date.
 
-```
-https://chromewebstore.google.com/detail/scriber-exam-supervision/<extension-id>
-```
+**How long:** usually a few days. Anything requesting `tabs` is more likely to
+get a manual look, so allow a week for the first submission. You'll get an
+email either way; rejections name the specific policy and you fix and
+resubmit against the same item.
 
-Paste that into **Site admin → Public site → Extension install link**. The
-install prompt and the Settings page both read it from there, so it takes
-effect immediately with no deploy. Until it is set, both fall back to a store
-search, which is a poor experience — set it the day it is approved.
+## Step 8 — The day it is approved
+
+1. Copy the public URL:
+
+   ```
+   https://chromewebstore.google.com/detail/scriber-exam-supervision/<extension-id>
+   ```
+
+2. Paste it into Scriber: **Site admin → Public site → Extension install
+   link** → **Save**.
+
+   Both the install prompt and the Settings pairing panel read it from there,
+   so it takes effect immediately with no deploy. Until you set it, both fall
+   back to a store search that finds nothing — set it the same day.
+
+---
+
+## For schools running managed Chromebooks
+
+Worth telling every school you demo to. It turns installation from a
+per-student instruction into one administrator's afternoon:
+
+**Where:** <https://admin.google.com> → **Devices** → **Chrome** → **Apps &
+extensions** → **Users & browsers**
+
+1. Select the student organisational unit in the left tree.
+2. Click the **+** button (bottom right) → **Add Chrome app or extension by
+   ID**.
+3. Paste the extension ID. Leave the source as "From the Chrome Web Store" —
+   this works for an Unlisted item too.
+4. Set **Installation policy** → **Force install**.
+
+Force-installed extensions install silently and **cannot be removed by the
+student**, which is exactly the property a supervised assessment wants. Do it
+against the student OU only, not staff.
 
 ## Shipping an update
 
-1. Bump `version` in `extension/manifest.json` (or `--version 1.1.0`).
-2. `node scripts/build-extension.mjs`
-3. Upload the new zip to the existing item and submit.
+1. Bump `version` in `extension/manifest.json` (or `npm run build:extension --
+   --version 1.1.0`).
+2. `npm run build:extension`
+3. Item → **Package** tab → **Upload new package** → **Submit for review**.
 
-The extension ID never changes, so the link in Scriber stays correct. Chrome
-updates installed copies within a few hours. Anything that adds a permission
-resets installed users to a disabled state until they accept it — so avoid
-adding permissions in the middle of an exam period.
+The extension ID never changes, so the link in Scriber stays correct, and
+Chrome updates installed copies within a few hours.
+
+**One trap:** adding a *new permission* disables the extension for every
+existing user until each one accepts the new permission dialog. Never ship a
+permission change during an exam period.

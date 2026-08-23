@@ -628,7 +628,7 @@ function SiteContentEditor() {
         <p className="small muted" style={{ marginTop: 6 }}>
           Where "Get the extension" sends people. Paste the Chrome Web Store URL the day the
           listing is approved — until then it falls back to a store search, which mostly finds
-          nothing. See extension/STORE-LISTING.md.
+          nothing. See docs/chrome-web-store.md.
         </p>
       </div>
 

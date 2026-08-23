@@ -23,7 +23,7 @@ export function ExtensionPrompt() {
   const { memberships } = useAuth()
   const [dismissed, setDismissed] = useState(true)
   // Set by a site admin the day the store listing is approved — see
-  // extension/STORE-LISTING.md.
+  // docs/chrome-web-store.md.
   const [storeUrl, setStoreUrl] = useState(DEFAULT_CONTENT.extensionUrl)
 
   useEffect(() => subscribeSiteConfig((config) => setStoreUrl(config.content.extensionUrl)), [])

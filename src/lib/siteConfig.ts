@@ -50,7 +50,7 @@ export const DEFAULT_CONTENT: SiteContent = {
   ctaLabel: 'Start practising free',
   banner: '',
   // A search, until the listing exists. Honest but poor — see
-  // extension/STORE-LISTING.md.
+  // docs/chrome-web-store.md.
   extensionUrl: 'https://chromewebstore.google.com/search/scriber',
 }
 

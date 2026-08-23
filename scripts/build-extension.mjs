@@ -17,8 +17,8 @@
  *   node scripts/build-extension.mjs --version 1.1.0
  */
 import { execFileSync } from 'node:child_process'
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { cpSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, existsSync } from 'node:fs'
+import { basename, extname, join, relative } from 'node:path'
 
 const SOURCE = 'extension'
 const OUT = 'dist-extension'
@@ -68,12 +68,41 @@ for (const size of ['16', '48', '128']) {
   }
 }
 
+/**
+ * What may go in the package, by extension.
+ *
+ * An allowlist rather than a list of things to skip, because the failure
+ * modes are not symmetrical: a shipped file nobody meant to ship is public
+ * forever the moment the listing goes live — anyone can unzip a published
+ * extension — while a missing one fails loudly the first time it is loaded.
+ * This caught a notes file that had already gone out once.
+ */
+const SHIPPABLE = new Set(['.js', '.html', '.css', '.json', '.png', '.svg', '.woff2'])
+
 rmSync(OUT, { recursive: true, force: true })
 mkdirSync(STAGE, { recursive: true })
+
+const rejected = []
 cpSync(SOURCE, STAGE, {
   recursive: true,
-  filter: (path) => !path.endsWith('.DS_Store'),
+  filter: (path) => {
+    if (statSync(path).isDirectory()) return true
+    if (basename(path).startsWith('.')) return false
+    if (SHIPPABLE.has(extname(path).toLowerCase())) return true
+    rejected.push(relative(SOURCE, path))
+    return false
+  },
 })
+
+// Refused rather than silently dropped: a file sitting in extension/ that
+// cannot ship is either something that belongs elsewhere in the repo, or
+// something this list needs to learn about. Both want a human to look.
+if (rejected.length > 0) {
+  throw new Error(
+    `these files are in extension/ but cannot ship: ${rejected.join(', ')}\n` +
+      'Move them out of extension/, or add their type to SHIPPABLE if they belong in the package.',
+  )
+}
 writeFileSync(join(STAGE, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
 
 // Zipped from inside the staged folder: the store wants the manifest at the
@@ -86,4 +115,4 @@ console.log(`  version         ${manifest.version}`)
 console.log(`  hosts           ${manifest.host_permissions.join(', ')}`)
 console.log(`  permissions     ${(manifest.permissions ?? []).join(', ')}`)
 console.log('\nUpload that zip at https://chrome.google.com/webstore/devconsole')
-console.log('Listing copy and permission justifications: extension/STORE-LISTING.md')
+console.log('Listing copy and permission justifications: docs/chrome-web-store.md')

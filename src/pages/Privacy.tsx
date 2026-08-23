@@ -104,7 +104,11 @@ export function Privacy() {
 
         <h2>What we deliberately don't do</h2>
         <ul>
-          <li>No advertising, no trackers, and nothing sold or shared with anyone for marketing.</li>
+          <li>No advertising, and nothing sold or shared with anyone for marketing.</li>
+          <li>
+            No tracking cookies and no device fingerprint. We count page views with Cloudflare Web
+            Analytics, which is cookieless and cannot follow you to any other site — see below.
+          </li>
           <li>No recording of your screen or your voice.</li>
           <li>No full web addresses from the extension — hostnames and page titles only. That you opened a search engine is the point; what you typed into it is not our business.</li>
           <li>No access for your school to your own private practice. A teacher sees work you do <em>for them</em>, never the sessions you run on your own.</li>
@@ -123,12 +127,25 @@ export function Privacy() {
           papers, and that limit is written into the security rules, not just the policy.
         </p>
 
+        <h2>Counting visits</h2>
+        <p>
+          We use Cloudflare Web Analytics to see how many people reach the site and which pages
+          they land on. It sets no cookies, builds no fingerprint of your device, and cannot
+          recognise you on any other site — which is why there is no consent banner here. What it
+          records is a page address, a referrer, a rough screen size and a country.
+        </p>
+        <p>
+          It does not run in the exam room. A live test's address carries your school's and your
+          test's identifiers, and those are nobody else's business — not even for counting.
+        </p>
+
         <h2>The extension</h2>
         <p>
           The Scriber supervision extension is optional to install and useless until you pair it
-          with your account using a one-time code you generate yourself. Once paired, it reports
-          the hostnames and titles of your open tabs — but only while you are sitting a test, and
-          only to the school running it.
+          with your account. Pairing happens from Settings while you are signed in, or with a
+          one-time code if the extension is in a browser you are not signed in on. Once paired, it
+          reports the hostnames and titles of your open tabs — but only while you are sitting a
+          test, and only to the school running it.
         </p>
         <p>
           You can unpair it at any time from the extension's own popup, or remove it entirely from

@@ -232,6 +232,12 @@ export function ExamRoom() {
    */
   const isLiveTest = !!testId
   const paused = isLiveTest && me?.paused === true
+  /**
+   * The roll says this student isn't here. Whoever is supervising decides
+   * that, so it holds mid-answer as well as before the start — a student
+   * marked absent is out, and reloading does not get them back in.
+   */
+  const markedAbsent = isLiveTest && me?.attendance === 'absent'
   const readingLocked = isLiveTest && phase === 'reading'
   const pausedRef = useRef(paused)
   pausedRef.current = paused
@@ -601,6 +607,20 @@ export function ExamRoom() {
     void setParticipantSharing(orgId, testId, user.uid, !!screenStream).catch(() => undefined)
   }, [screenStream, orgId, testId, user])
 
+  // Being marked absent stops everything at once — the microphone, the
+  // read-back, and the screen the supervisor was watching. Waiting for the
+  // student to notice a message would leave a camera on somebody who has been
+  // told to leave.
+  useEffect(() => {
+    if (!markedAbsent) return
+    dictation.current?.stop()
+    readAloud.stop()
+    setScreenStream((current) => {
+      current?.getTracks().forEach((track) => track.stop())
+      return null
+    })
+  }, [markedAbsent])
+
   // The extension reports only for the length of a test. Ending it on unmount
   // matters as much as starting it: closing the tab, navigating away or
   // finishing all have to put the reporting back to sleep.
@@ -916,6 +936,38 @@ export function ExamRoom() {
         </div>
 
         {showCommands && <CommandDrawer onClose={() => setShowCommands(false)} />}
+      </div>
+    )
+  }
+
+  // Ahead of every other view, including the exam itself: somebody marked
+  // absent is out, wherever they had got to, and a reload does not readmit
+  // them because the roll is on the server rather than in this page.
+  if (markedAbsent) {
+    return (
+      <div className="page" style={{ maxWidth: 640 }}>
+        <div className="page-head">
+          <div className="grow">
+            <h1>{test?.title ?? 'Live test'}</h1>
+            <p className="muted">{test?.className}</p>
+          </div>
+        </div>
+        <div className="card card-pad stack gap-3">
+          <span className="badge badge-warn" style={{ alignSelf: 'flex-start' }}>
+            Marked absent
+          </span>
+          <p className="muted">
+            Your supervisor has marked you absent for this test, so you cannot sit it. Anything you
+            had written has been left as it was.
+          </p>
+          <p className="small muted">
+            If that is wrong, speak to your supervisor — they can mark you present and you can come
+            straight back in.
+          </p>
+          <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} onClick={() => navigate('/')}>
+            Back to Scriber
+          </button>
+        </div>
       </div>
     )
   }

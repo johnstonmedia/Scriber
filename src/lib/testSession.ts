@@ -68,6 +68,12 @@ export type TestParticipant = {
   /** Epoch ms the pause lifts on its own — null means it waits for the teacher to resume it manually. */
   pauseEndsAt: number | null
   pausedBy: string | null
+  /**
+   * The roll. Marked by whoever is supervising, never by the student —
+   * a student who could mark themselves present would make it worthless.
+   * Absent ends the test for them and refuses them re-entry.
+   */
+  attendance: 'present' | 'absent'
   /** Whether this student's screen is being shared with the supervisor right now. */
   sharing: boolean
   /**
@@ -166,6 +172,7 @@ function toTestParticipant(snapshot: QueryDocumentSnapshot<DocumentData>): TestP
     paused: data.paused === true,
     pauseEndsAt: typeof data.pauseEndsAt === 'number' ? data.pauseEndsAt : null,
     pausedBy: typeof data.pausedBy === 'string' ? data.pausedBy : null,
+    attendance: data.attendance === 'absent' ? 'absent' : 'present',
     sharing: data.sharing === true,
     extension: data.extension?.connected
       ? {
@@ -369,6 +376,20 @@ export async function joinTestSession(
     { uid: profile.uid, name: profile.name, status: 'ready', wordCount: 0, preview: '', updatedAt: serverTimestamp() },
     { merge: true },
   )
+}
+
+/**
+ * Taking the roll. An absent student is put out of the test and kept out:
+ * the exam room checks this on every update, so marking somebody absent
+ * removes them even if they are already mid-answer.
+ */
+export async function setAttendance(
+  orgId: string,
+  testId: string,
+  uid: string,
+  attendance: 'present' | 'absent',
+): Promise<void> {
+  await updateDoc(participantDoc(orgId, testId, uid), { attendance, updatedAt: serverTimestamp() })
 }
 
 /** Whether this student's screen is reaching the supervisor right now. */

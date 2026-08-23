@@ -10,6 +10,7 @@ import {
   finishTestSession,
   pauseParticipant,
   resumeParticipant,
+  setAttendance,
   startReading,
   startWorking,
   subscribeIntegrityAlerts,
@@ -151,6 +152,20 @@ export function TestMonitor() {
     return acc
   }, {})
 
+  /**
+   * Taking the roll. Marking somebody absent ends the test for them
+   * immediately, so it is confirmed — a misclick during an exam would put a
+   * student out of an assessment they were sitting.
+   */
+  function handleAttendance(p: TestParticipant) {
+    if (!orgId || !testId) return
+    const next = p.attendance === 'absent' ? 'present' : 'absent'
+    if (next === 'absent' && !confirm(`Mark ${p.name} absent? They will be put out of this test.`)) {
+      return
+    }
+    void setAttendance(orgId, testId, p.uid, next).catch((err) => setError(appError('SCR-400', err)))
+  }
+
   function handlePause(p: TestParticipant) {
     if (!orgId || !testId || !user) return
     if (p.paused) {
@@ -204,6 +219,10 @@ export function TestMonitor() {
         <div className="stat">
           <div className="value">{finishedCount}</div>
           <div className="label">Finished</div>
+        </div>
+        <div className="stat">
+          <div className="value">{participants.filter((p) => p.attendance === 'absent').length}</div>
+          <div className="label">Marked absent</div>
         </div>
         <div className="stat">
           <div className="value">{participants.filter((p) => p.sharing).length}</div>
@@ -284,7 +303,9 @@ export function TestMonitor() {
                   <span className="badge">{p.wordCount} words</span>
                   <span
                     className={`badge ${
-                      p.paused
+                      p.attendance === 'absent'
+                        ? 'badge-warn'
+                        : p.paused
                         ? 'badge-warn'
                         : p.status === 'finished'
                           ? 'badge-good'
@@ -293,15 +314,22 @@ export function TestMonitor() {
                             : ''
                     }`}
                   >
-                    {p.paused
-                      ? 'Paused'
-                      : p.status === 'ready'
-                        ? 'Ready'
-                        : p.status === 'active'
-                          ? 'Working'
-                          : 'Finished'}
+                    {p.attendance === 'absent'
+                      ? 'Absent'
+                      : p.paused
+                        ? 'Paused'
+                        : p.status === 'ready'
+                          ? 'Ready'
+                          : p.status === 'active'
+                            ? 'Working'
+                            : 'Finished'}
                   </span>
                   {test.phase !== 'finished' && p.status !== 'finished' && (
+                    <button className="btn btn-sm" onClick={() => handleAttendance(p)}>
+                      {p.attendance === 'absent' ? 'Mark present' : 'Mark absent'}
+                    </button>
+                  )}
+                  {test.phase !== 'finished' && p.status !== 'finished' && p.attendance === 'present' && (
                     <button className="btn btn-sm" onClick={() => handlePause(p)}>
                       {p.paused ? 'Resume' : 'Pause'}
                     </button>

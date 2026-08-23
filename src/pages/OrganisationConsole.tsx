@@ -104,6 +104,18 @@ export function OrganisationConsole() {
     void refresh()
   }, [refresh])
 
+  // Memoised because ClassTests subscribes per class: a fresh array on every
+  // render would tear down and rebuild every test listener each time.
+  //
+  // Kept above the early returns below, and it matters: a hook after a
+  // conditional return changes the hook count between renders the moment
+  // `membership` arrives, which React answers by tearing the whole subtree
+  // down. That is what made class creation fail intermittently.
+  const myClasses = useMemo(
+    () => (isStaff && !isAdmin ? classes.filter((c) => c.teacherIds.includes(uid ?? '')) : classes),
+    [classes, isStaff, isAdmin, uid],
+  )
+
   if (!orgId) return null
 
   if (!membership && !siteAdmin) {
@@ -116,13 +128,6 @@ export function OrganisationConsole() {
       </div>
     )
   }
-
-  // Memoised because ClassTests subscribes per class: a fresh array on every
-  // render would tear down and rebuild every test listener each time.
-  const myClasses = useMemo(
-    () => (isStaff && !isAdmin ? classes.filter((c) => c.teacherIds.includes(uid!)) : classes),
-    [classes, isStaff, isAdmin, uid],
-  )
 
   async function handleCreateClass(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()

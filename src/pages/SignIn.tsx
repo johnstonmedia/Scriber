@@ -3,13 +3,14 @@ import { useAuth } from '../lib/auth'
 import { BrandLockup } from '../components/BrandMark'
 
 export function SignIn() {
-  const { signIn, signUp, signInWithGoogle, configured } = useAuth()
+  const { signIn, signUp, signInWithGoogle, sendPasswordReset, configured } = useAuth()
   const [mode, setMode] = useState<'signin' | 'signup'>('signin')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [resetSent, setResetSent] = useState(false)
 
   async function run(action: () => Promise<void>) {
     setError(null)
@@ -187,6 +188,40 @@ export function SignIn() {
                 placeholder={mode === 'signup' ? 'At least 6 characters' : ''}
               />
             </div>
+
+            {mode === 'signin' && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                style={{ alignSelf: 'flex-end', marginTop: -6 }}
+                disabled={busy || !configured}
+                onClick={async () => {
+                  if (!email.trim()) {
+                    setError('Enter your email address first, then ask for a reset link.')
+                    return
+                  }
+                  setBusy(true)
+                  setError(null)
+                  try {
+                    await sendPasswordReset(email)
+                    setResetSent(true)
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : 'Could not send a reset link.')
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+              >
+                Forgot your password?
+              </button>
+            )}
+
+            {resetSent && (
+              <div className="alert alert-info">
+                If there's a Scriber account for {email.trim()}, a reset link is on its way. It
+                expires after an hour.
+              </div>
+            )}
 
             {error && <div className="alert alert-error">{error}</div>}
 

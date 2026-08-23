@@ -316,14 +316,18 @@ service cloud.firestore {
           // A student may write their own progress, but never the pause
           // fields — being paused is a thing done TO them by a teacher, so a
           // student's own write has to leave those exactly as they were.
+          // Being marked absent is done TO a student by whoever is taking the
+          // roll, the same as being paused — a student who could mark
+          // themselves present would make the roll worthless.
           allow create: if isOwner(uid)
             && request.resource.data.uid == uid
-            && !request.resource.data.keys().hasAny(['paused', 'pauseEndsAt', 'pausedBy']);
+            && !request.resource.data.keys().hasAny(['paused', 'pauseEndsAt', 'pausedBy', 'attendance']);
           allow update: if isOwner(uid)
             && request.resource.data.uid == uid
             && request.resource.data.get('paused', false) == resource.data.get('paused', false)
             && request.resource.data.get('pauseEndsAt', null) == resource.data.get('pauseEndsAt', null)
-            && request.resource.data.get('pausedBy', null) == resource.data.get('pausedBy', null);
+            && request.resource.data.get('pausedBy', null) == resource.data.get('pausedBy', null)
+            && request.resource.data.get('attendance', 'present') == resource.data.get('attendance', 'present');
           // Staff pause, resume and otherwise manage any participant row.
           allow write: if isOrgTeacher(orgId);
 

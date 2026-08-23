@@ -313,6 +313,33 @@ await teacherPage
 await studentAPage.waitForSelector('.mic-button', { timeout: 20000 })
 console.log('the teacher resumed student A')
 
+// ------------------------------------------------- 9b. taking the roll
+//
+// Marking somebody absent has to hold mid-answer, not just before the start,
+// and it has to survive a reload — the roll lives on the server, not in the
+// student's page.
+
+teacherPage.once('dialog', (d) => d.accept())
+await teacherPage
+  .locator('.card > div', { hasText: 'Student B' })
+  .getByRole('button', { name: 'Mark absent' })
+  .click()
+await studentBPage.waitForSelector('text=Marked absent', { timeout: 15000 })
+console.log('student B was put out of the test the moment they were marked absent')
+
+await studentBPage.reload({ waitUntil: 'domcontentloaded' })
+await studentBPage.waitForSelector('text=Marked absent', { timeout: 15000 })
+console.log('reloading does not readmit an absent student')
+
+// No confirm here on purpose — putting somebody back into a test they are
+// entitled to sit needs no ceremony; it is marking them absent that does.
+await teacherPage
+  .locator('.card > div', { hasText: 'Student B' })
+  .getByRole('button', { name: 'Mark present' })
+  .click()
+await studentBPage.waitForSelector('text=Marked absent', { state: 'detached', timeout: 15000 })
+console.log('marking them present again lets them straight back in')
+
 // -------------------------------------------------------- 7. teacher ends it
 
 teacherPage.once('dialog', (dialog) => dialog.accept())

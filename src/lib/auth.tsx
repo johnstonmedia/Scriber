@@ -14,6 +14,7 @@ import {
   onAuthStateChanged,
   reload,
   sendEmailVerification,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut as firebaseSignOut,
@@ -95,6 +96,8 @@ type AuthValue = {
   markOnboarded: () => Promise<void>
   /** Re-sends the verification email Firebase sent on sign-up. */
   sendVerificationEmail: () => Promise<void>
+  /** Emails a password reset link. Resolves the same way whether or not the account exists. */
+  sendPasswordReset: (email: string) => Promise<void>
   /** Firebase caches emailVerified client-side; call after the user says they've clicked the link. */
   refreshEmailVerified: () => Promise<boolean>
 }
@@ -326,6 +329,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await sendEmailVerification(auth.currentUser)
   }, [])
 
+  /**
+   * Deliberately swallows "no such account". Reporting it would turn the
+   * reset form into a way of asking whether a given email has a Scriber
+   * account — which, for a tool used by students with disability provisions,
+   * is not a question a stranger gets to ask.
+   */
+  const sendPasswordReset = useCallback(async (email: string) => {
+    try {
+      await sendPasswordResetEmail(auth, email.trim())
+    } catch (error) {
+      const code = (error as { code?: string })?.code ?? ''
+      if (code === 'auth/user-not-found' || code === 'auth/invalid-email') return
+      throw new Error(readableError(error))
+    }
+  }, [])
+
   const refreshEmailVerified = useCallback(async () => {
     if (!auth.currentUser) return false
     await reload(auth.currentUser)
@@ -360,6 +379,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updateName,
       markOnboarded,
       sendVerificationEmail,
+      sendPasswordReset,
       refreshEmailVerified,
     }),
     [
@@ -381,6 +401,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updateName,
       markOnboarded,
       sendVerificationEmail,
+    sendPasswordReset,
+      sendPasswordReset,
       refreshEmailVerified,
     ],
   )

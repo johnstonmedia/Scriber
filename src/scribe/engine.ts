@@ -94,7 +94,7 @@ export function normaliseUtterance(raw: string, profile: RuleProfile): string {
     text = text
       .toLowerCase()
       // Keep apostrophes and hyphens inside words (don't, well-known); drop the rest.
-      .replace(/[.,!?;:"“”…()\[\]{}]/g, ' ')
+      .replace(/[.,!?;:"“”…()[\]{}]/g, ' ')
       .replace(/(^|\s)['’-]+|['’-]+(?=\s|$)/g, '$1')
   }
   return text.replace(/\s+/g, ' ').trim()

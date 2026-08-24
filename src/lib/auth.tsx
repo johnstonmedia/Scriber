@@ -401,7 +401,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updateName,
       markOnboarded,
       sendVerificationEmail,
-    sendPasswordReset,
       sendPasswordReset,
       refreshEmailVerified,
     ],

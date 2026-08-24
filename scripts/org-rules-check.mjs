@@ -26,7 +26,7 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore'
-import { initializeApp as initAdminApp, cert as adminCert } from 'firebase-admin/app'
+import { initializeApp as initAdminApp } from 'firebase-admin/app'
 import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore'
 
 const PROJECT_ID = 'demo-scriber'

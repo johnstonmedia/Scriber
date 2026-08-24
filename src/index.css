@@ -8,7 +8,11 @@
 :root {
   --ink: #10151c;
   --ink-soft: #48545f;
-  --ink-faint: #7c8794;
+  /* 4.89:1 on --paper and 4.63:1 on --surface-alt, so the faintest text on
+     the site still clears WCAG AA for normal sizes. The previous #7c8794
+     sat at 3.41:1 — legible to most people, and not to the ones this
+     product exists for. Verified by scripts/a11y-audit.mjs. */
+  --ink-faint: #646d79;
   --paper: #f6f7f9;
   --surface: #ffffff;
   --surface-alt: #eef1f5;
@@ -60,7 +64,10 @@
 :root[data-theme='dark'] {
   --ink: #eef2f7;
   --ink-soft: #a8b4c2;
-  --ink-faint: #77848f;
+  /* 5.62:1 on --surface, 5.01:1 on --surface-alt. The previous #77848f
+     passed on the page background alone and failed on both card surfaces,
+     which is where nearly all faint text actually sits. */
+  --ink-faint: #8a95a1;
   --paper: #0e1218;
   --surface: #161c25;
   --surface-alt: #1e2631;
@@ -139,6 +146,22 @@ a {
   text-decoration: none;
 }
 a:hover { text-decoration: underline; }
+
+/*
+ * A link sitting inside a paragraph has to be findable without colour —
+ * WCAG 1.4.1, and the reason is ordinary: a reader with a colour vision
+ * deficiency sees a run of text with nothing in it to click. Underlining
+ * every link on the site would put a line under the nav and under every
+ * card action, so this is scoped to the places a link is genuinely embedded
+ * in prose. Standalone links are not in a text block and do not need it.
+ */
+p a,
+li a,
+td a,
+dd a {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
 
 button,
 input,

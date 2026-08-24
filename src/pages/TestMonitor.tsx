@@ -197,6 +197,13 @@ export function TestMonitor() {
             {test.scheduledAt ? ` · ${new Date(test.scheduledAt).toLocaleString('en-AU')}` : ''}
           </p>
         </div>
+        {/*
+          The supervisor's clock. It was missing entirely, which meant the one
+          question somebody running an exam asks every couple of minutes —
+          how long is left — could only be answered from the students' own
+          screens.
+        */}
+        <PhaseClock test={test} />
         <Link className="btn" to={`/organisations/${orgId}`}>
           Back to console
         </Link>
@@ -234,12 +241,12 @@ export function TestMonitor() {
         </div>
       </div>
 
-      {test.phase === 'lobby' && notSharing.length > 0 && (
-        <div className="alert alert-warn" style={{ marginBottom: 22 }}>
-          Waiting on {notSharing.map((p) => p.name).join(', ')} to share their screen. You can still
-          begin — they'll be flagged until they do.
-        </div>
-      )}
+      <NextStep
+        test={test}
+        participants={participants}
+        totalStudents={totalStudents}
+        notSharing={notSharing}
+      />
 
       <div className="row gap-2 wrap" style={{ marginBottom: 22 }}>
         {test.phase === 'lobby' && (
@@ -311,7 +318,9 @@ export function TestMonitor() {
                           ? 'badge-good'
                           : p.status === 'active'
                             ? 'badge-live'
-                            : ''
+                            : p.status === 'ready' && test.phase === 'working'
+                              ? 'badge-warn'
+                              : ''
                     }`}
                   >
                     {p.attendance === 'absent'
@@ -319,7 +328,15 @@ export function TestMonitor() {
                       : p.paused
                         ? 'Paused'
                         : p.status === 'ready'
-                          ? 'Ready'
+                          ? // "Ready" is only true before the test starts. Once it
+                            // is running, somebody still sitting at 'ready' has not
+                            // written a word — which is a different thing entirely,
+                            // and the one a supervisor might want to walk over about.
+                            test.phase === 'lobby'
+                            ? 'Ready'
+                            : test.phase === 'reading'
+                              ? 'Reading'
+                              : 'Not started'
                           : p.status === 'active'
                             ? 'Working'
                             : 'Finished'}
@@ -441,3 +458,122 @@ function TabWatch({ participant }: { participant: TestParticipant }) {
     </div>
   )
 }
+
+/**
+ * How long is left in this phase, ticking once a second.
+ *
+ * Deliberately the largest thing in the header after the title. A supervisor
+ * asks this more often than anything else on the page, and before this they
+ * had to read it off a student's screen.
+ */
+function PhaseClock({ test }: { test: TestSession }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  if (test.phase === 'lobby' || test.phase === 'finished' || test.phaseEndsAt === null) return null
+
+  const msLeft = Math.max(0, test.phaseEndsAt - now)
+  const minutes = Math.floor(msLeft / 60_000)
+  const seconds = Math.floor((msLeft % 60_000) / 1000)
+  // Five minutes is the point at which a supervisor starts giving warnings, so
+  // that is when the clock stops being furniture.
+  const closing = msLeft <= 5 * 60_000
+
+  return (
+    <div className={`phase-clock ${closing ? 'phase-clock-closing' : ''}`}>
+      <div className="phase-clock-time mono">
+        {minutes}:{String(seconds).padStart(2, '0')}
+      </div>
+      <div className="phase-clock-label">
+        {test.phase === 'reading' ? 'reading time left' : 'working time left'}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The one thing to do next, in a sentence.
+ *
+ * Six stat tiles and a roster tell a supervisor everything except what they
+ * should do about it. This says it plainly, and says nothing at all when
+ * there is nothing to say — a permanent banner is one people stop reading.
+ */
+function NextStep({
+  test,
+  participants,
+  totalStudents,
+  notSharing,
+}: {
+  test: TestSession
+  participants: TestParticipant[]
+  totalStudents: number | null
+  notSharing: TestParticipant[]
+}) {
+  const names = (people: TestParticipant[]) =>
+    people.length <= 2
+      ? people.map((p) => p.name).join(' and ')
+      : `${people.length} students`
+
+  if (test.phase === 'lobby') {
+    const missing = totalStudents === null ? 0 : Math.max(0, totalStudents - participants.length)
+    if (participants.length === 0) {
+      return (
+        <div className="alert alert-info" style={{ marginBottom: 22 }}>
+          Nobody has joined the waiting room yet. Students open the test from their school page —
+          the door opens five minutes before the scheduled time.
+        </div>
+      )
+    }
+    if (missing > 0 || notSharing.length > 0) {
+      return (
+        <div className="alert alert-warn" style={{ marginBottom: 22 }}>
+          {missing > 0 && (
+            <>
+              Still waiting on {missing} student{missing === 1 ? '' : 's'} to join.{' '}
+            </>
+          )}
+          {notSharing.length > 0 && <>{names(notSharing)} hasn't shared a screen yet. </>}
+          You can begin anyway — anyone missing is flagged until they're sorted.
+        </div>
+      )
+    }
+    return (
+      <div className="alert alert-good" style={{ marginBottom: 22 }}>
+        Everyone is here and sharing their screen. Begin when you're ready — reading time starts
+        for the whole class at once.
+      </div>
+    )
+  }
+
+  if (test.phase === 'reading') {
+    return (
+      <div className="alert alert-info" style={{ marginBottom: 22 }}>
+        Reading time. Nobody can dictate yet — working time starts on your clock, or as soon as you
+        end reading early.
+      </div>
+    )
+  }
+
+  if (test.phase === 'working') {
+    const stuck = participants.filter((p) => p.attendance === 'present' && !p.sharing)
+    if (stuck.length > 0) {
+      return (
+        <div className="alert alert-warn" style={{ marginBottom: 22 }}>
+          {names(stuck)} stopped sharing a screen. Check the room — a closed share is usually a
+          misclick, not a decision.
+        </div>
+      )
+    }
+    return null
+  }
+
+  return (
+    <div className="alert alert-info" style={{ marginBottom: 22 }}>
+      This test has finished. Everyone's answers were saved to their own session review.
+    </div>
+  )
+}
+

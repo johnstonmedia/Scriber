@@ -297,6 +297,34 @@ textarea.input {
 .alert-error { background: var(--live-soft); color: var(--live); }
 .alert-info { background: var(--accent-soft); color: var(--accent-ink); }
 .alert-warn { background: var(--warn-soft); color: var(--warn); }
+.alert-good { background: var(--good-soft); color: var(--good); }
+
+/*
+ * The supervisor's clock. Large enough to read across a room from the
+ * invigilator's desk, and it changes colour only when it starts to matter —
+ * a permanently red clock is one nobody looks at.
+ */
+.phase-clock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 4px 16px;
+  margin-right: 12px;
+  border-right: 1px solid var(--line);
+}
+.phase-clock-time {
+  font-size: 2.1rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.phase-clock-label {
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+  text-transform: lowercase;
+}
+.phase-clock-closing .phase-clock-time { color: var(--live); }
+.phase-clock-closing .phase-clock-label { color: var(--live); }
 
 .divider { height: 1px; background: var(--line); border: 0; margin: 0; }
 

@@ -21,6 +21,11 @@ const DISMISSED_KEY = 'scriber-extension-prompt-dismissed'
  */
 export function ExtensionPrompt() {
   const { memberships } = useAuth()
+  // Staff never sit an exam, so a notice telling them they may not be able to
+  // is simply wrong — and it was the most prominent thing on a supervisor's
+  // monitor. Supervision needs nothing installed: the extension reports to
+  // them, it does not run for them.
+  const sitsExams = memberships.some((m) => m.role === 'student')
   const [dismissed, setDismissed] = useState(true)
   // Set by a site admin the day the store listing is approved — see
   // docs/chrome-web-store.md.
@@ -37,7 +42,7 @@ export function ExtensionPrompt() {
     }
   }, [])
 
-  if (memberships.length === 0 || extensionInstalled() || dismissed) return null
+  if (!sitsExams || extensionInstalled() || dismissed) return null
 
   return (
     <div className="extension-prompt no-print">

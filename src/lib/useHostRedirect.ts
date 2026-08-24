@@ -67,6 +67,13 @@ export function useHostRedirect(): HostState {
       void goToOrigin(url)
     }
 
+    // The public site is the public site. Being signed in does not change
+    // what pracscriber.com is for, and bouncing a signed-in visitor off it
+    // means the one address everybody knows cannot be used to read about the
+    // product. There is an "Open Scriber" button in the header for people who
+    // want the app from here.
+    if (kind === 'marketing') return
+
     // On a school's address: stay only if it is actually yours. An address
     // that isn't yours quietly working anyway is precisely what the
     // subdomains exist to prevent.
@@ -78,24 +85,18 @@ export function useHostRedirect(): HostState {
     }
 
     // Already where somebody with no single school belongs.
-    if (kind === 'app' && memberships.length !== 1) return
+    if (memberships.length !== 1) return
 
-    // On the public site while signed in, or on the app while belonging to
-    // exactly one school. Either way, find out where they should be.
-    if (memberships.length !== 1) {
-      leave('Scriber', appUrl())
-      return
-    }
-
+    // On the app while belonging to exactly one school: their school's own
+    // address is a better home than the generic one.
     const only = memberships[0]!
     let live = true
     void getOrganisation(only.orgId)
       .then((organisation) => {
         if (!live) return
         // A school that has not claimed a subdomain has nowhere to send them,
-        // so the plain app is where they belong — unless they are already on it.
+        // so the plain app is where they belong and they are already on it.
         if (organisation?.slug) leave(organisation.name, orgUrl(organisation.slug))
-        else if (kind === 'marketing') leave('Scriber', appUrl())
       })
       .catch(() => undefined)
     return () => {

@@ -1,5 +1,7 @@
 import { type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { appUrl, goToOrigin, loginUrl } from '../lib/hostOrg'
+import { useAuth } from '../lib/auth'
 import { useReveal, useScrollProgress, useScrollY } from '../lib/useReveal'
 import { HomeDemo } from '../components/HomeDemo'
 import { HeroScene } from '../components/HeroScene'
@@ -50,6 +52,16 @@ function CascadeHeading({ text, className = '' }: { text: string; className?: st
 export function Home({ content }: { content: SiteContent }) {
   const scrollY = useScrollY()
   const progress = useScrollProgress()
+  // Every way in from the public site goes to the app's own origin. A
+  // Firebase session belongs to one origin, so a sign-in form served from
+  // pracscriber.com creates a session app.pracscriber.com cannot see — which
+  // is what made people sign in twice.
+  const signIn = loginUrl()
+  // Signed in and reading the public site — which is now a thing that can
+  // happen, since pracscriber.com no longer throws anybody out. One button
+  // instead of two, and it carries a handoff token so the app doesn't ask
+  // them to sign in again.
+  const { user } = useAuth()
 
   return (
     <div className="home">
@@ -60,12 +72,20 @@ export function Home({ content }: { content: SiteContent }) {
           Scriber
         </Link>
         <div className="spacer" />
-        <Link to="/login" className="btn btn-ghost">
-          Sign in
-        </Link>
-        <Link to="/login" className="btn btn-primary">
-          Get started
-        </Link>
+        {user ? (
+          <button className="btn btn-primary" onClick={() => void goToOrigin(appUrl())}>
+            Open Scriber
+          </button>
+        ) : (
+          <>
+            <a href={signIn} className="btn btn-ghost">
+              Sign in
+            </a>
+            <a href={signIn} className="btn btn-primary">
+              Get started
+            </a>
+          </>
+        )}
       </header>
 
       <section className="home-hero">
@@ -84,9 +104,9 @@ export function Home({ content }: { content: SiteContent }) {
           <CascadeHeading className="home-h1" text={content.heroTitle} />
           <p className="home-lede">{content.heroBody}</p>
           <div className="row gap-3 wrap" style={{ marginTop: 8 }}>
-            <Link to="/login" className="btn btn-primary btn-lg">
+            <a href={signIn} className="btn btn-primary btn-lg">
               {content.ctaLabel}
-            </Link>
+            </a>
             <a href="#how" className="btn btn-lg">
               See how it works
             </a>
@@ -206,9 +226,9 @@ export function Home({ content }: { content: SiteContent }) {
         <Reveal>
           <h2 className="home-h2">Say it like you mean it.</h2>
           <p className="lede">Free to practise. No credit card. Ready in under a minute.</p>
-          <Link to="/login" className="btn btn-primary btn-lg">
+          <a href={signIn} className="btn btn-primary btn-lg">
             Start practising
-          </Link>
+          </a>
         </Reveal>
       </section>
 

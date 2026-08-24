@@ -1,8 +1,17 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from '../lib/auth'
 import { BrandLockup } from '../components/BrandMark'
+import type { HostOrg } from '../lib/hostOrg'
 
-export function SignIn() {
+/**
+ * `hostOrg` is set when this page is being served from a school's own
+ * address. Somebody arriving at stpauls.pracscriber.com should see St Paul's,
+ * not a pitch written for strangers — they have already been told what this
+ * is, by their school. Scriber stays visible underneath: the school is
+ * borrowing the product, not white-labelling it, and a student needs to know
+ * whose account they are creating.
+ */
+export function SignIn({ hostOrg }: { hostOrg?: HostOrg | null }) {
   const { signIn, signUp, signInWithGoogle, sendPasswordReset, configured } = useAuth()
   const [mode, setMode] = useState<'signin' | 'signup'>('signin')
   const [name, setName] = useState('')
@@ -33,15 +42,39 @@ export function SignIn() {
 
   return (
     <div className="auth-screen">
-      <section className="auth-pitch">
+      <section
+        className="auth-pitch"
+        style={hostOrg ? { borderBottom: `4px solid ${hostOrg.branding.accentColor}` } : undefined}
+      >
         <div className="stack gap-4">
-          <BrandLockup size={34} nameSize="1.45rem" />
-          <h1>Practise with a writer before the exam room does it for real.</h1>
-          <p className="lede">
-            Scriber acts as your writer under NESA exam provisions. It writes down exactly what
-            you say — and nothing you don't. Dictate your punctuation, your paragraphs and your
-            capitals, just like you will on exam day.
-          </p>
+          {hostOrg ? (
+            <>
+              <div className="row gap-3 wrap" style={{ alignItems: 'center' }}>
+                {hostOrg.branding.logoDataUrl && (
+                  <img src={hostOrg.branding.logoDataUrl} alt="" style={{ height: 44 }} />
+                )}
+                <h1 style={{ margin: 0 }}>{hostOrg.name}</h1>
+              </div>
+              <p className="lede">
+                {hostOrg.branding.tagline ||
+                  `Sign in to practise and to sit ${hostOrg.name}'s supervised tests.`}
+              </p>
+              <div className="row gap-2" style={{ alignItems: 'center' }}>
+                <span className="tiny faint">Exam practice by</span>
+                <BrandLockup size={22} nameSize="1rem" />
+              </div>
+            </>
+          ) : (
+            <>
+              <BrandLockup size={34} nameSize="1.45rem" />
+              <h1>Practise with a writer before the exam room does it for real.</h1>
+              <p className="lede">
+                Scriber acts as your writer under NESA exam provisions. It writes down exactly
+                what you say — and nothing you don't. Dictate your punctuation, your paragraphs
+                and your capitals, just like you will on exam day.
+              </p>
+            </>
+          )}
         </div>
 
         <ul className="pitch-list">

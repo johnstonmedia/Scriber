@@ -10,7 +10,7 @@ import {
 } from 'react-router-dom'
 import { AuthProvider, useAuth } from './lib/auth'
 import { useHostRedirect } from './lib/useHostRedirect'
-import { hostKind, type HostOrg } from './lib/hostOrg'
+import { appUrl, goToOrigin, hostKind, loginUrl, originsAreSeparate, type HostOrg } from './lib/hostOrg'
 import { Home } from './pages/Home'
 import { SignIn } from './pages/SignIn'
 import { Welcome } from './pages/Welcome'
@@ -118,8 +118,38 @@ function TopBar({ host }: { host: HostOrg | null }) {
   )
 }
 
+/**
+ * Hands the visitor to another origin and says where they are going. A hop
+ * between subdomains is not instant, and an unexplained blank moment on an
+ * address change reads as a fault.
+ */
+function LeaveFor({ url, label }: { url: string; label: string }) {
+  useEffect(() => {
+    void goToOrigin(url)
+  }, [url])
+  return (
+    <div style={{ display: 'grid', placeItems: 'center', height: '100vh' }} className="muted">
+      Taking you to {label}…
+    </div>
+  )
+}
+
+/** The same, keeping whatever path was typed — /settings stays /settings. */
+function LeaveForCurrentPath() {
+  const location = useLocation()
+  const url = `${appUrl()}${location.pathname}${location.search}`
+  useEffect(() => {
+    void goToOrigin(url)
+  }, [url])
+  return (
+    <div style={{ display: 'grid', placeItems: 'center', height: '100vh' }} className="muted">
+      Taking you to Scriber…
+    </div>
+  )
+}
+
 function Shell() {
-  const { user, loading, onboarded, pendingInvites, siteAdmin } = useAuth()
+  const { user, loading, onboarded, pendingInvites, siteAdmin, memberships } = useAuth()
   const location = useLocation()
   const [siteConfig, setSiteConfig] = useState(DEFAULT_SITE_CONFIG)
   const host = useHostRedirect()
@@ -159,10 +189,26 @@ function Shell() {
     )
   }
 
+  // The public site is a separate thing from the product, at every moment.
+  // pracscriber.com shows the homepage whether or not somebody is signed in,
+  // and carries no app routes at all — its sign-in button hands straight over
+  // to the app's own origin, where the session is actually going to be used.
+  if (kind === 'marketing' && originsAreSeparate()) {
+    return (
+      <Routes>
+        <Route path="/privacy" element={<Privacy />} />
+        <Route path="/login" element={<LeaveFor url={loginUrl()} label="Scriber" />} />
+        <Route path="/" element={<Home content={siteConfig.content} />} />
+        {/* Any app route typed against the public address belongs on the app. */}
+        <Route path="*" element={<LeaveForCurrentPath />} />
+      </Routes>
+    )
+  }
+
   if (!user) {
     return (
       <Routes>
-        <Route path="/login" element={<SignIn />} />
+        <Route path="/login" element={<SignIn hostOrg={host.org} />} />
         <Route path="/privacy" element={<Privacy />} />
         {/*
           The public site explains Scriber to somebody who has never seen it,
@@ -212,7 +258,23 @@ function Shell() {
       {!bare && <ExtensionPrompt />}
       <Routes>
         <Route path="/privacy" element={<Privacy />} />
-        <Route path="/" element={<Dashboard />} />
+        {/*
+          On a school's own address, the school is the point. Somebody who
+          signed in at stpauls.pracscriber.com came for St Paul's, not for a
+          generic dashboard with St Paul's listed on it — so land them in it.
+          Site admins are exempt: they work across schools and are not
+          necessarily a member of the one whose address they are on.
+        */}
+        <Route
+          path="/"
+          element={
+            host.org && !siteAdmin && memberships.some((m) => m.orgId === host.org!.id) ? (
+              <Navigate to={`/organisations/${host.org.id}`} replace />
+            ) : (
+              <Dashboard />
+            )
+          }
+        />
         <Route path="/welcome" element={<Welcome />} />
         <Route path="/exam" element={<ExamRoom />} />
         <Route path="/sessions/:id" element={<SessionReview />} />

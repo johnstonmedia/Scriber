@@ -1135,6 +1135,48 @@ await allowed('a site admin reads the demo request queue', async () => {
   if (snap.empty) throw new Error('expected the filed request to be there')
 })
 
+// ------------------------------------------------- the calibration grant list
+//
+// Same shape as orgCreators, and the same thing to get wrong: a list that
+// anybody can add themselves to is not an invitation list.
+
+await denied('a signed-in user cannot grant themselves calibration access', async () => {
+  await signInAs('teacher@school.test')
+  await setDoc(doc(db, 'calibrationTesters', 'teacher@school.test'), {
+    email: 'teacher@school.test',
+    grantedBy: 'self',
+    grantedAt: new Date().toISOString(),
+  })
+})
+
+await denied("a signed-in user cannot read somebody else's grant", async () => {
+  await signInAs('teacher@school.test')
+  await getDoc(doc(db, 'calibrationTesters', 'student@school.test'))
+})
+
+await allowed('somebody can check their own grant, so the app knows whether to offer the tab', async () => {
+  await signInAs('teacher@school.test')
+  await getDoc(doc(db, 'calibrationTesters', 'teacher@school.test'))
+})
+
+await allowed('a site admin grants calibration access', async () => {
+  await signInAs('outsider@school.test') // granted site admin further up
+  await setDoc(doc(db, 'calibrationTesters', 'student@school.test'), {
+    email: 'student@school.test',
+    grantedBy: outsider.uid,
+    grantedAt: new Date().toISOString(),
+  })
+})
+
+await denied('an org admin cannot grant calibration access', async () => {
+  await signInAs('orgadmin@school.test')
+  await setDoc(doc(db, 'calibrationTesters', 'someone@school.test'), {
+    email: 'someone@school.test',
+    grantedBy: 'org admin',
+    grantedAt: new Date().toISOString(),
+  })
+})
+
 await adminApp.delete()
 
 const failed = results.filter((r) => !r.passed)

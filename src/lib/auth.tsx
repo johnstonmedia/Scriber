@@ -1,4 +1,5 @@
 import { MEMORY_PRESETS, type MemoryPreset, type MemorySettings } from '../scribe/workingMemory'
+import type { Calibration } from '../scribe/calibration'
 import {
   createContext,
   useCallback,
@@ -31,7 +32,11 @@ import {
   type Membership,
   type PendingInvite,
 } from './org'
-import { isSiteAdmin as checkSiteAdmin, canCreateOrg as checkCanCreateOrg } from './siteAdmin'
+import {
+  isSiteAdmin as checkSiteAdmin,
+  canCreateOrg as checkCanCreateOrg,
+  canCalibrate as checkCanCalibrate,
+} from './siteAdmin'
 import { clearFiles } from './fileStore'
 
 export type Settings = {
@@ -40,6 +45,12 @@ export type Settings = {
   recogniserLanguage: string
   showLiveText: boolean
   fontSize: 'small' | 'medium' | 'large'
+  /**
+   * What this student's pauses mean, measured from them reading aloud. Null
+   * until they do it — see scribe/calibration.ts. Only consulted under the
+   * HSC writer profile, where a writer may supply punctuation at all.
+   */
+  calibration: Calibration | null
   /** Which writer you are practising against. */
   writerPreset: MemoryPreset
   /** Resolved limits for that writer. */
@@ -54,6 +65,7 @@ export const DEFAULT_SETTINGS: Settings = {
   recogniserLanguage: 'en-AU',
   showLiveText: true,
   fontSize: 'medium',
+  calibration: null,
   writerPreset: 'realistic',
   memory: MEMORY_PRESETS.realistic!.settings,
   clearFilesOnSignOut: false,
@@ -80,6 +92,8 @@ type AuthValue = {
   siteAdmin: boolean
   /** Whether this account may create a new organisation — always true for a site admin. */
   canCreateOrg: boolean
+  /** Whether the invitation-only calibration tab is offered to this account. */
+  calibrationTester: boolean
   /** False only for a brand-new account that hasn't been through the welcome walkthrough yet. */
   onboarded: boolean
   /**
@@ -167,6 +181,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([])
   const [siteAdmin, setSiteAdmin] = useState(false)
   const [canCreateOrg, setCanCreateOrg] = useState(false)
+  const [calibrationTester, setCalibrationTester] = useState(false)
   const [onboarded, setOnboarded] = useState(true)
   const [orgStateError, setOrgStateError] = useState<string | null>(null)
 
@@ -183,11 +198,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         firstFailure ??= err instanceof Error ? err.message : String(err)
         return fallback
       })
-    let [nextMemberships, nextInvites, nextSiteAdmin, nextCanCreateOrg] = await Promise.all([
+    let [nextMemberships, nextInvites, nextSiteAdmin, nextCanCreateOrg, nextCalibration] = await Promise.all([
       logged('listMyMemberships', listMyMemberships(uid), []),
       email ? logged('listMyPendingInvites', listMyPendingInvites(email), []) : Promise.resolve([]),
       logged('isSiteAdmin', checkSiteAdmin(uid), false),
       email ? logged('canCreateOrg', checkCanCreateOrg(email), false) : Promise.resolve(false),
+      email ? logged('canCalibrate', checkCanCalibrate(email), false) : Promise.resolve(false),
     ])
     // A school that added this address before the account existed was
     // enrolling its own student, not inviting a stranger — so verifying the
@@ -220,6 +236,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setPendingInvites(invites)
     setSiteAdmin(nextSiteAdmin)
     setCanCreateOrg(nextSiteAdmin || nextCanCreateOrg)
+    setCalibrationTester(nextSiteAdmin || nextCalibration)
     setOrgStateError(firstFailure)
   }, [])
 
@@ -246,6 +263,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setPendingInvites([])
         setSiteAdmin(false)
         setCanCreateOrg(false)
+        setCalibrationTester(false)
         setOnboarded(true)
         setLoading(false)
         return
@@ -404,6 +422,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       pendingInvites,
       siteAdmin,
       canCreateOrg,
+      calibrationTester,
       onboarded,
       orgStateError,
       refreshMemberships,
@@ -426,6 +445,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       pendingInvites,
       siteAdmin,
       canCreateOrg,
+      calibrationTester,
       onboarded,
       orgStateError,
       refreshMemberships,

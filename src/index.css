@@ -1193,6 +1193,19 @@ textarea.input {
   .home-steps-line::after { transition: none; }
 }
 
+/* The line a student reads aloud to teach their writer. Set in the page's
+   own voice at reading size — they are reading it, not scanning it. */
+.calibration-line {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  line-height: 1.5;
+  margin: 0;
+  padding: 20px 22px;
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+  border-left: 3px solid var(--accent);
+}
+
 /* A school's own page inside the console. Rows read as a list, not a table:
    the label carries the meaning, so the value can stay unaligned. */
 .org-home-row {

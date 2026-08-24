@@ -160,6 +160,16 @@ service cloud.firestore {
       allow write: if isSiteAdmin();
     }
 
+    // Who may open the calibration tab, which teaches the writer one
+    // student's speech. Same shape as orgCreators: existence of a document is
+    // the grant, only a site admin writes it, and the invited email may read
+    // their own entry so the app knows whether to offer the tab.
+    match /calibrationTesters/{email} {
+      allow read: if isSiteAdmin()
+        || (isSignedIn() && request.auth.token.email != null && request.auth.token.email.lower() == email);
+      allow write: if isSiteAdmin();
+    }
+
     // A domain (or subdomain) registered here lets anyone signing up with a
     // matching, verified email address join that org instantly — no request,
     // no admin approval, since the trust decision already happened when the

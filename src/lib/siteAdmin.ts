@@ -82,6 +82,39 @@ export async function revokeOrgCreator(email: string): Promise<void> {
   await deleteDoc(doc(db, 'orgCreators', normaliseEmail(email)))
 }
 
+/**
+ * Who may open the calibration tab.
+ *
+ * Teaching the writer somebody's speech is not finished work: it asks a
+ * student to read aloud into a microphone and then changes how their exam
+ * practice is punctuated, and getting it wrong is worse than not having it.
+ * So it goes to people we have actually spoken to, one at a time, the same
+ * way organisation creation does — an email on a list, granted by a site
+ * admin, revocable.
+ */
+export async function canCalibrate(email: string): Promise<boolean> {
+  if (!email) return false
+  const snapshot = await getDoc(doc(db, 'calibrationTesters', normaliseEmail(email)))
+  return snapshot.exists()
+}
+
+export async function listCalibrationTesters(): Promise<string[]> {
+  const snapshot = await getDocs(collection(db, 'calibrationTesters'))
+  return snapshot.docs.map((d) => d.id)
+}
+
+export async function grantCalibration(email: string, grantedBy: string): Promise<void> {
+  await setDoc(doc(db, 'calibrationTesters', normaliseEmail(email)), {
+    email: normaliseEmail(email),
+    grantedBy,
+    grantedAt: new Date().toISOString(),
+  })
+}
+
+export async function revokeCalibration(email: string): Promise<void> {
+  await deleteDoc(doc(db, 'calibrationTesters', normaliseEmail(email)))
+}
+
 export async function getAccountProfile(uid: string): Promise<AccountProfile | null> {
   const snapshot = await getDoc(doc(db, 'users', uid))
   if (!snapshot.exists()) return null

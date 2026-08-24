@@ -23,6 +23,7 @@ import { Organisations } from './pages/Organisations'
 import { OrganisationConsole } from './pages/OrganisationConsole'
 import { TestMonitor } from './pages/TestMonitor'
 import { SiteAdmin } from './pages/SiteAdmin'
+import { Calibrate } from './pages/Calibrate'
 import { ComingSoon } from './pages/ComingSoon'
 import { Privacy } from './pages/Privacy'
 import { ExtensionPrompt } from './components/ExtensionPrompt'
@@ -47,9 +48,18 @@ function useTheme() {
  * school should never look like it built this.
  */
 function TopBar({ host }: { host: HostOrg | null }) {
-  const { user, memberships, pendingInvites, siteAdmin, signOut } = useAuth()
+  const { user, memberships, pendingInvites, siteAdmin, calibrationTester, signOut } = useAuth()
   const { theme, toggle } = useTheme()
   const navigate = useNavigate()
+
+  // A student in one school does not think of themselves as being in
+  // "organisations" — they are at Northside High. So the tab is called what
+  // the place is called, and links straight into it. The generic word is only
+  // right for somebody who is in more than one, or none yet.
+  const only = memberships.length === 1 ? memberships[0]! : null
+  const orgTab = only
+    ? { to: `/organisations/${only.orgId}`, label: only.orgName || 'My school' }
+    : { to: '/organisations', label: memberships.length > 1 ? 'My schools' : 'Organisations' }
 
   return (
     <header
@@ -72,15 +82,20 @@ function TopBar({ host }: { host: HostOrg | null }) {
           Papers
         </NavLink>
         <NavLink
-          to="/organisations"
+          to={orgTab.to}
           className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
         >
-          Organisations
+          {orgTab.label}
           {pendingInvites.length > 0 && <span className="nav-dot" aria-label="Pending invite" />}
         </NavLink>
         <NavLink to="/settings" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
           Settings
         </NavLink>
+        {calibrationTester && (
+          <NavLink to="/calibrate" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+            Your writer
+          </NavLink>
+        )}
         {siteAdmin && (
           <NavLink to="/admin" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
             Site admin
@@ -88,7 +103,7 @@ function TopBar({ host }: { host: HostOrg | null }) {
         )}
       </nav>
 
-      {memberships.length > 0 && (
+      {memberships.length > 1 && (
         <select
           className="input org-switcher"
           onChange={(e) => e.target.value && navigate(`/organisations/${e.target.value}`)}
@@ -282,6 +297,7 @@ function Shell() {
         <Route path="/organisations" element={<Organisations />} />
         <Route path="/organisations/:orgId" element={<OrganisationConsole />} />
         <Route path="/organisations/:orgId/tests/:testId" element={<TestMonitor />} />
+        <Route path="/calibrate" element={<Calibrate />} />
         <Route path="/admin" element={<SiteAdmin />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

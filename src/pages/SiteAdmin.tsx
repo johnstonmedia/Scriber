@@ -4,9 +4,12 @@ import { useAuth } from '../lib/auth'
 import { createOrganisation, inviteMember, resetMemberPassword, setOrgPlan } from '../lib/org'
 import {
   deleteOrganisation,
+  grantCalibration,
   grantOrgCreator,
+  listCalibrationTesters,
   listOrganisationsWithCounts,
   listOrgCreators,
+  revokeCalibration,
   revokeOrgCreator,
   type OrganisationSummary,
 } from '../lib/siteAdmin'
@@ -169,6 +172,15 @@ export function SiteAdmin() {
         )}
       </section>
 
+      <GrantList
+        title="Who can teach their writer"
+        blurb="The calibration tab asks somebody to read aloud and then changes how their practice is punctuated. Getting that wrong for a student is worse than not having it, so it goes out a few people at a time."
+        placeholder="student@school.edu"
+        load={listCalibrationTesters}
+        grant={grantCalibration}
+        revoke={revokeCalibration}
+      />
+
       <section>
         <h2 style={{ marginBottom: 12 }}>Organisations</h2>
         {orgs.length === 0 ? (
@@ -240,6 +252,80 @@ export function SiteAdmin() {
         )}
       </section>
     </div>
+  )
+}
+
+/**
+ * An email-keyed grant list: type an address, it can do the thing; revoke and
+ * it can't. Two of these now, and they behave identically — the difference is
+ * only which collection they write to.
+ */
+function GrantList({
+  title,
+  blurb,
+  placeholder,
+  load,
+  grant,
+  revoke,
+}: {
+  title: string
+  blurb: string
+  placeholder: string
+  load: () => Promise<string[]>
+  grant: (email: string, grantedBy: string) => Promise<void>
+  revoke: (email: string) => Promise<void>
+}) {
+  const { user } = useAuth()
+  const [emails, setEmails] = useState<string[]>([])
+  const [draft, setDraft] = useState('')
+
+  const refresh = () => load().then(setEmails).catch(() => undefined)
+  useEffect(() => {
+    void refresh()
+    // The loader is a module-level function, so it never changes identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  return (
+    <section className="card card-pad stack gap-3" style={{ marginBottom: 24, maxWidth: 480 }}>
+      <h2>{title}</h2>
+      <p className="small muted" style={{ marginTop: -8 }}>
+        {blurb}
+      </p>
+      <form
+        className="row gap-2"
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (!user) return
+          void grant(draft.trim(), user.uid).then(() => {
+            setDraft('')
+            void refresh()
+          })
+        }}
+      >
+        <input
+          className="input grow"
+          type="email"
+          placeholder={placeholder}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          required
+        />
+        <button className="btn btn-primary">Grant</button>
+      </form>
+      {emails.length > 0 && (
+        <div className="stack gap-2">
+          {emails.map((email) => (
+            <div className="row gap-2" key={email}>
+              <span className="grow small">{email}</span>
+              <button className="btn btn-sm btn-ghost" onClick={() => void revoke(email).then(refresh)}>
+                Revoke
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }
 

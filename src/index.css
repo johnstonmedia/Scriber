@@ -1193,6 +1193,9 @@ textarea.input {
   .home-steps-line::after { transition: none; }
 }
 
+/* The colophon. Quiet by design — a credit, not a claim. */
+.home-colophon { margin-top: 4px; }
+
 /* The line a student reads aloud to teach their writer. Set in the page's
    own voice at reading size — they are reading it, not scanning it. */
 .calibration-line {

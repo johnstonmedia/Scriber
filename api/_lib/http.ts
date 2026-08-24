@@ -6,6 +6,8 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
+type Method = 'GET' | 'POST'
+
 /** A failure the caller is allowed to see the reason for. */
 export class HttpError extends Error {
   status: number
@@ -43,14 +45,21 @@ type Handler = (req: VercelRequest, res: VercelResponse) => Promise<unknown>
  * status and code; anything else is logged and reported as a plain 500, since
  * an unexpected failure's message is for us, not for the caller.
  */
-export function route(method: 'GET' | 'POST', handler: Handler) {
+/**
+ * `method` accepts a list because LTI's login initiation is specified as
+ * either GET or POST and platforms genuinely differ — Schoolbox uses one,
+ * Canvas the other, and a tool that only handles one silently fails to launch
+ * on half of them.
+ */
+export function route(method: Method | Method[], handler: Handler) {
+  const allowed = Array.isArray(method) ? method : [method]
   return async (req: VercelRequest, res: VercelResponse) => {
     applyCors(req, res)
     if (req.method === 'OPTIONS') {
       res.status(204).end()
       return
     }
-    if (req.method !== method) {
+    if (!allowed.includes(req.method as Method)) {
       res.status(405).json({ error: 'method-not-allowed' })
       return
     }

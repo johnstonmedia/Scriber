@@ -240,6 +240,16 @@ export function Home({ content }: { content: SiteContent }) {
         <p className="tiny">
           <Link to="/privacy">Privacy</Link>
         </p>
+        <p className="tiny faint home-colophon">
+          {content.publisherUrl ? (
+            <a href={content.publisherUrl} target="_blank" rel="noopener noreferrer">
+              A Johnston Media Platform
+            </a>
+          ) : (
+            'A Johnston Media Platform'
+          )}
+          <span aria-hidden="true"> · </span>© {new Date().getFullYear()} Will Johnston Media
+        </p>
       </footer>
     </div>
   )

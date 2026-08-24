@@ -23,7 +23,14 @@ process.env.PUBLIC_ROOT_DOMAIN ??= 'localhost'
 const API_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'api')
 const PORT = Number(process.env.API_PORT ?? 5174)
 
-/** Reads the body Vercel would have parsed for us. */
+/**
+ * Reads the body Vercel would have parsed for us.
+ *
+ * Form-encoded bodies matter as much as JSON here: an LTI launch arrives as
+ * application/x-www-form-urlencoded, because the platform posts it from a
+ * browser form. Falling back to the raw string for those made every launch
+ * look like it had no id_token at all.
+ */
 function readBody(req) {
   return new Promise((done) => {
     const chunks = []
@@ -31,6 +38,10 @@ function readBody(req) {
     req.on('end', () => {
       const raw = Buffer.concat(chunks).toString('utf8')
       if (!raw) return done(undefined)
+      const type = String(req.headers['content-type'] ?? '')
+      if (type.includes('application/x-www-form-urlencoded')) {
+        return done(Object.fromEntries(new URLSearchParams(raw)))
+      }
       try {
         done(JSON.parse(raw))
       } catch {

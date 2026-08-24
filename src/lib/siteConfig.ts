@@ -34,6 +34,8 @@ export type SiteContent = {
    * listing is approved, and that day should not need a deploy.
    */
   extensionUrl: string
+  /** Where "A Johnston Media Platform" in the footer points. */
+  publisherUrl: string
 }
 
 export type SiteConfig = {
@@ -52,6 +54,7 @@ export const DEFAULT_CONTENT: SiteContent = {
   // A search, until the listing exists. Honest but poor — see
   // docs/chrome-web-store.md.
   extensionUrl: 'https://chromewebstore.google.com/search/scriber',
+  publisherUrl: '',
 }
 
 export const DEFAULT_SITE_CONFIG: SiteConfig = {
@@ -83,6 +86,9 @@ export function subscribeSiteConfig(cb: (config: SiteConfig) => void): Unsubscri
           // means "no notice today" rather than "fall back to the default".
           banner: typeof content.banner === 'string' ? content.banner : '',
           extensionUrl: text(content.extensionUrl, DEFAULT_CONTENT.extensionUrl),
+          // Blank is a real choice here — no link until one is set, rather
+          // than a footer credit pointing nowhere.
+          publisherUrl: typeof content.publisherUrl === 'string' ? content.publisherUrl : '',
         },
       })
     },

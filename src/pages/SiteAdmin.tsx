@@ -718,6 +718,21 @@ function SiteContentEditor() {
         </p>
       </div>
 
+      <div className="field">
+        <label htmlFor="scPublisher">Publisher link</label>
+        <input
+          id="scPublisher"
+          className="input"
+          placeholder="https://johnstonmedia.com.au"
+          value={value.publisherUrl}
+          onChange={(e) => edit({ publisherUrl: e.target.value })}
+        />
+        <p className="small muted" style={{ marginTop: 6 }}>
+          Where "A Johnston Media Platform" in the footer points. Leave it blank and the credit
+          stays as plain text rather than a link to nowhere.
+        </p>
+      </div>
+
       <div className="field" style={{ maxWidth: 260 }}>
         <label htmlFor="scCta">Main button</label>
         <input

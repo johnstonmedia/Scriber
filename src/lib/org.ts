@@ -695,6 +695,46 @@ export async function acceptInvite(
   }
 }
 
+/**
+ * Joins any organisation that was expecting this address before the account
+ * existed.
+ *
+ * Adding somebody by email covers two different situations that should not
+ * feel the same. If they already have a Scriber account, being added is an
+ * invitation: it appears when they next sign in and they choose to accept,
+ * because joining a school attaches their existing work to it and that is
+ * their decision. If they have no account, there is nobody to ask — the
+ * school is not inviting a stranger, it is enrolling its own student — so
+ * signing up and verifying the address the school named is itself the
+ * acceptance, and they arrive already a member.
+ *
+ * The two are told apart by time rather than by asking the backend whether an
+ * account exists: an invite issued before the account was created is one
+ * nobody could have accepted, which is precisely the second case. That also
+ * avoids standing up an endpoint that answers "does this email have an
+ * account", which is an enumeration oracle whatever it is gated on.
+ */
+export async function joinInvitesPredatingAccount(profile: {
+  uid: string
+  email: string
+  name: string
+  accountCreatedAt: number
+}): Promise<string[]> {
+  const invites = await listMyPendingInvites(profile.email)
+  const joined: string[] = []
+  for (const invite of invites) {
+    if (Date.parse(invite.createdAt) >= profile.accountCreatedAt) continue
+    try {
+      await acceptInvite(invite.orgId, profile)
+      joined.push(invite.orgName)
+    } catch {
+      // A seat that filled up, or a revoked invite. It stays pending and they
+      // can be told about it the ordinary way rather than failing sign-up.
+    }
+  }
+  return joined
+}
+
 // ---------------------------------------------------------------- domains
 
 /**

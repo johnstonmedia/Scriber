@@ -228,19 +228,27 @@ export function OrgAdminDashboard(props: Props) {
 
               <div style={{ padding: '18px', borderTop: members.length > 0 ? '1px solid var(--line)' : 'none' }}>
                 <form className="row gap-2 wrap" onSubmit={handleInvite}>
-                  <input name="email" type="email" className="input" placeholder="Invite by email" required style={{ maxWidth: 260 }} />
+                  <input name="email" type="email" className="input" placeholder="Add by email" required style={{ maxWidth: 260 }} />
                   <select name="role" className="input" style={{ maxWidth: 140 }} defaultValue="student">
                     <option value="student">Student</option>
                     <option value="teacher">Teacher</option>
                     <option value="admin">Admin</option>
                   </select>
-                  <button className="btn btn-primary">Invite</button>
+                  <button className="btn btn-primary">Add</button>
                 </form>
+                <p className="small muted" style={{ marginTop: 8 }}>
+                  Somebody who already has a Scriber account chooses whether to join — joining
+                  attaches their existing practice to this school, so it is theirs to accept.
+                  Somebody who doesn't have one yet joins automatically as soon as they sign up
+                  and verify this address.
+                </p>
                 {pendingInvites.length > 0 && (
                   <div className="stack gap-2" style={{ marginTop: 14 }}>
                     {pendingInvites.map((invite) => (
                       <div className="row gap-2" key={invite.email}>
-                        <span className="grow small">{invite.email} — invited as {invite.role}</span>
+                        <span className="grow small">
+                          {invite.email} — joins as {invite.role} when they next sign in
+                        </span>
                         <button className="btn btn-sm btn-ghost" onClick={() => void revokeInvite(orgId, invite.email).then(refresh)}>
                           Revoke
                         </button>

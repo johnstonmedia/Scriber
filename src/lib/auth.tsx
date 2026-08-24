@@ -24,7 +24,13 @@ import {
 import { doc, getDoc, setDoc } from 'firebase/firestore'
 import { auth, db, firebaseConfigured } from './firebase'
 import { consumeHandoff } from './hostOrg'
-import { listMyMemberships, listMyPendingInvites, type Membership, type PendingInvite } from './org'
+import {
+  joinInvitesPredatingAccount,
+  listMyMemberships,
+  listMyPendingInvites,
+  type Membership,
+  type PendingInvite,
+} from './org'
 import { isSiteAdmin as checkSiteAdmin, canCreateOrg as checkCanCreateOrg } from './siteAdmin'
 import { clearFiles } from './fileStore'
 
@@ -177,14 +183,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         firstFailure ??= err instanceof Error ? err.message : String(err)
         return fallback
       })
-    const [nextMemberships, nextInvites, nextSiteAdmin, nextCanCreateOrg] = await Promise.all([
+    let [nextMemberships, nextInvites, nextSiteAdmin, nextCanCreateOrg] = await Promise.all([
       logged('listMyMemberships', listMyMemberships(uid), []),
       email ? logged('listMyPendingInvites', listMyPendingInvites(email), []) : Promise.resolve([]),
       logged('isSiteAdmin', checkSiteAdmin(uid), false),
       email ? logged('canCreateOrg', checkCanCreateOrg(email), false) : Promise.resolve(false),
     ])
+    // A school that added this address before the account existed was
+    // enrolling its own student, not inviting a stranger — so verifying the
+    // address the school named is itself the acceptance and there is nothing
+    // to click. Done here rather than at the moment of verification because
+    // an account can arrive already verified (signing in on a new device, or
+    // after clicking the link in another tab), and those have to behave the
+    // same as clicking "I've verified" in front of us.
+    let invites = nextInvites
+    const current = auth.currentUser
+    const createdAt = Date.parse(current?.metadata.creationTime ?? '')
+    if (invites.length > 0 && current?.emailVerified && Number.isFinite(createdAt)) {
+      const joined = await joinInvitesPredatingAccount({
+        uid,
+        email,
+        name: current.displayName ?? '',
+        accountCreatedAt: createdAt,
+      }).catch(() => [])
+      if (joined.length > 0) {
+        const [freshMemberships, freshInvites] = await Promise.all([
+          logged('listMyMemberships', listMyMemberships(uid), nextMemberships),
+          logged('listMyPendingInvites', listMyPendingInvites(email), []),
+        ])
+        nextMemberships = freshMemberships
+        invites = freshInvites
+      }
+    }
+
     setMemberships(nextMemberships)
-    setPendingInvites(nextInvites)
+    setPendingInvites(invites)
     setSiteAdmin(nextSiteAdmin)
     setCanCreateOrg(nextSiteAdmin || nextCanCreateOrg)
     setOrgStateError(firstFailure)
@@ -355,8 +388,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // fresh one so a write immediately after this call isn't denied.
     if (verified) await auth.currentUser.getIdToken(true)
     setUser((current) => (current ? { ...current, emailVerified: verified } : current))
+    // Reloading the org state is what performs the automatic join, if this
+    // account was added to a school before it existed — see loadOrgState.
+    if (verified) await refreshMemberships()
     return verified
-  }, [])
+  }, [refreshMemberships])
 
   const value = useMemo<AuthValue>(
     () => ({

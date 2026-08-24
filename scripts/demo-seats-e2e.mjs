@@ -196,7 +196,7 @@ if (!invite.exists || invite.data().role !== 'admin') {
 }
 console.log("the school's contact was invited as its admin")
 
-// ------------------------------- 3. the school's admin accepts and fills up
+// ------------------------------- 3. the school's admin arrives and fills up
 
 const schoolPage = await newPage()
 await createAccount(schoolPage, emails.schoolAdmin, 'Sam Patel')
@@ -204,20 +204,21 @@ await clearWelcome(schoolPage)
 await verifyEmail(schoolPage, emails.schoolAdmin)
 await signIn(schoolPage, emails.schoolAdmin)
 await schoolPage.goto('http://localhost:5173/organisations', { waitUntil: 'domcontentloaded' })
-await schoolPage.getByRole('button', { name: 'Accept invitation' }).click()
-// The invite card and the membership card both carry the school's name, so
-// the honest signal that acceptance landed is the Open link only a real
-// membership renders.
+// We added this address before the account existed, so verifying it is the
+// acceptance. Nothing to click — the organisation is simply theirs. The
+// membership card's Open link is the honest signal, since the invite card
+// carries the same school name.
 await schoolPage
+  .locator('article.card')
+  .filter({ hasText: SCHOOL })
   .getByRole('link', { name: 'Open' })
-  .first()
-  .waitFor({ state: 'visible', timeout: 20000 })
+  .waitFor({ state: 'visible', timeout: 25000 })
   .catch(async () => {
-    await shot(schoolPage, '03a-accept-failed')
+    await shot(schoolPage, '03a-join-failed')
     const alert = await schoolPage.locator('.alert-error').first().innerText().catch(() => '(no alert)')
-    throw new Error(`the school could not accept its own admin invite: ${alert}`)
+    throw new Error(`the school never landed in its own organisation: ${alert}`)
   })
-console.log('the school accepted and now runs its own organisation')
+console.log('the school runs its own organisation, with nothing to accept')
 
 await schoolPage.goto(`http://localhost:5173/organisations/${orgId}`, { waitUntil: 'domcontentloaded' })
 await schoolPage
@@ -232,9 +233,9 @@ await schoolPage.waitForSelector('text=student seats taken', { timeout: 20000 })
 // Five students fill the demo exactly.
 for (let i = 1; i <= 5; i += 1) {
   const email = `seats-student${i}-${stamp}@school.test`
-  await schoolPage.getByPlaceholder('Invite by email').fill(email)
+  await schoolPage.getByPlaceholder('Add by email').fill(email)
   await schoolPage.locator('select[name="role"]').selectOption('student')
-  await schoolPage.getByRole('button', { name: 'Invite' }).click()
+  await schoolPage.getByRole('button', { name: 'Add', exact: true }).click()
   await schoolPage.waitForSelector(`text=${email}`, { timeout: 15000 })
 }
 console.log('five students fill the demo')
@@ -243,9 +244,9 @@ await shot(schoolPage, '03-demo-full')
 await schoolPage.waitForSelector('text=5 of 5 student seats taken', { timeout: 10000 })
 
 // The sixth is the whole point.
-await schoolPage.getByPlaceholder('Invite by email').fill(`seats-student6-${stamp}@school.test`)
+await schoolPage.getByPlaceholder('Add by email').fill(`seats-student6-${stamp}@school.test`)
 await schoolPage.locator('select[name="role"]').selectOption('student')
-await schoolPage.getByRole('button', { name: 'Invite' }).click()
+await schoolPage.getByRole('button', { name: 'Add', exact: true }).click()
 const refusal = schoolPage.locator('.alert-error')
 await refusal.waitFor({ state: 'visible', timeout: 15000 })
 const refusalText = await refusal.innerText()
@@ -260,9 +261,9 @@ await shot(schoolPage, '04-refused')
 
 // Staff never take a seat, so a teacher still goes in on a full demo.
 const teacherEmail = `seats-teacher-${stamp}@school.test`
-await schoolPage.getByPlaceholder('Invite by email').fill(teacherEmail)
+await schoolPage.getByPlaceholder('Add by email').fill(teacherEmail)
 await schoolPage.locator('select[name="role"]').selectOption('teacher')
-await schoolPage.getByRole('button', { name: 'Invite' }).click()
+await schoolPage.getByRole('button', { name: 'Add', exact: true }).click()
 await schoolPage.waitForSelector(`text=${teacherEmail}`, { timeout: 15000 })
 console.log('a teacher still goes in on a full demo — staff never use a seat')
 
@@ -281,9 +282,9 @@ await schoolPage.reload({ waitUntil: 'domcontentloaded' })
 await schoolPage.getByRole('button', { name: 'Roster' }).click()
 // Five invites still stand; the teacher never took a seat.
 await schoolPage.waitForSelector('text=5 of 30 student seats taken', { timeout: 20000 })
-await schoolPage.getByPlaceholder('Invite by email').fill(`seats-student6-${stamp}@school.test`)
+await schoolPage.getByPlaceholder('Add by email').fill(`seats-student6-${stamp}@school.test`)
 await schoolPage.locator('select[name="role"]').selectOption('student')
-await schoolPage.getByRole('button', { name: 'Invite' }).click()
+await schoolPage.getByRole('button', { name: 'Add', exact: true }).click()
 await schoolPage.waitForSelector(`text=seats-student6-${stamp}@school.test`, { timeout: 15000 })
 await schoolPage.waitForSelector('text=6 of 30 student seats taken', { timeout: 15000 })
 console.log('the previously refused student goes in on the licensed plan')

@@ -143,9 +143,9 @@ console.log('org created:', orgId)
 await shot(adminPage, '01-org-created')
 
 await adminPage.getByRole('button', { name: 'Roster' }).click()
-await adminPage.getByPlaceholder('Invite by email').fill(emails.teacher)
+await adminPage.getByPlaceholder('Add by email').fill(emails.teacher)
 await adminPage.locator('select[name="role"]').selectOption('teacher')
-await adminPage.getByRole('button', { name: 'Invite' }).click()
+await adminPage.getByRole('button', { name: 'Add', exact: true }).click()
 await adminPage.waitForSelector(`text=${emails.teacher}`, { timeout: 10000 })
 console.log('teacher invited')
 
@@ -159,11 +159,26 @@ await createAccount(teacherPage, emails.teacher, 'Teacher Person')
 await teacherPage.waitForSelector('text=Verify your email to continue', { timeout: 20000 })
 await verifyEmail(teacherPage, emails.teacher)
 await completeWelcomeAsPersonal(teacherPage, 'Teacher Person')
+// The school added this address before the account existed, so verifying it
+// IS the acceptance — there is nothing to click, and no "Waiting for you".
 await teacherPage.goto('http://localhost:5173/organisations', { waitUntil: 'domcontentloaded' })
-await teacherPage.waitForSelector('text=Waiting for you', { timeout: 15000 })
-await teacherPage.getByRole('button', { name: 'Accept invitation' }).click()
-await teacherPage.getByRole('heading', { name: 'Your organisations' }).waitFor({ timeout: 15000 })
-console.log('teacher accepted invite')
+await teacherPage.getByRole('heading', { name: 'Your organisations' }).waitFor({ timeout: 20000 })
+const stillWaiting = await teacherPage
+  .locator('text=Waiting for you')
+  .isVisible()
+  .catch(() => false)
+if (stillWaiting) {
+  throw new Error('a brand-new account was asked to accept an invite it should have joined on')
+}
+// The top bar's organisation switcher carries the same name in an <option>,
+// which is never "visible" — the membership card's own Open link is the
+// honest signal that a membership exists.
+await teacherPage
+  .locator('article.card')
+  .filter({ hasText: ORG_NAME })
+  .getByRole('link', { name: 'Open' })
+  .waitFor({ state: 'visible', timeout: 15000 })
+console.log('teacher joined automatically — the account did not exist when the school added it')
 
 await teacherPage.goto(`http://localhost:5173/organisations/${orgId}`, { waitUntil: 'domcontentloaded' })
 await teacherPage.waitForSelector('text=You are a teacher', { timeout: 15000 })

@@ -22,7 +22,8 @@
     "test:pair": "node scripts/extension-pair-e2e.mjs",
     "store:shots": "node scripts/store-screenshots.mjs",
     "test:a11y": "node scripts/a11y-audit.mjs",
-    "test:lti": "node scripts/lti-e2e.mjs"
+    "test:lti": "node scripts/lti-e2e.mjs",
+    "capture:exam": "node scripts/capture-exam-screens.mjs"
   },
   "dependencies": {
     "firebase": "^12.17.1",

@@ -375,6 +375,9 @@ if (words(afterBackspace) >= words(beforeBackspace)) {
   throw new Error(`backspace did not remove a word: "${beforeBackspace}" -> "${afterBackspace}"`)
 }
 console.log('backspace deleted the last word')
+// The student's own view, mid-exam, with words on the page — the counterpart
+// to the supervisor's monitor.
+await shot(studentAPage, '02c-student-working')
 
 // ------------------------------------------------- 9b. taking the roll
 //

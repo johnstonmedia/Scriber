@@ -8,6 +8,8 @@ import {
   gradeRound,
   nextSentence,
   parseSentence,
+  observedGaps,
+  readingMatches,
   roundSamples,
 } from './drill'
 
@@ -157,4 +159,55 @@ test('the next sentence avoids ones already done', () => {
 test('once the bank is exhausted it starts over rather than returning nothing', () => {
   const done = DRILL_SENTENCES.map((s) => s.id)
   assert.ok(nextSentence(done, () => 0.5))
+})
+
+// --------------------------------------------------- reading the recogniser
+
+test('silences are read off the intervals between recogniser updates', () => {
+  const gaps = observedGaps([
+    { words: 2, at: 1000 },
+    { words: 4, at: 1300 },
+    { words: 5, at: 1900 },
+  ])
+  assert.deepEqual(gaps, [
+    { afterWordIndex: 1, ms: 300 },
+    { afterWordIndex: 3, ms: 600 },
+  ])
+})
+
+test('an update that added no words says nothing about a silence', () => {
+  const gaps = observedGaps([
+    { words: 3, at: 1000 },
+    { words: 3, at: 1400 },
+    { words: 5, at: 1500 },
+  ])
+  assert.deepEqual(gaps, [{ afterWordIndex: 2, ms: 100 }])
+})
+
+test('a reading of the right sentence is accepted', () => {
+  const parsed = parseSentence('The road was long, and the light was already going.')
+  assert.equal(
+    readingMatches(parsed, 'the road was long and the light was already going'.split(' ')),
+    true,
+  )
+})
+
+test('a dropped word does not reject an otherwise good reading', () => {
+  const parsed = parseSentence('The road was long, and the light was already going.')
+  assert.equal(
+    readingMatches(parsed, 'the road was long and the light was going'.split(' ')),
+    true,
+  )
+})
+
+test('reading a different sentence is rejected', () => {
+  const parsed = parseSentence('The road was long, and the light was already going.')
+  assert.equal(
+    readingMatches(parsed, 'comma comma comma comma comma comma comma comma comma'.split(' ')),
+    false,
+  )
+})
+
+test('saying nothing is rejected', () => {
+  assert.equal(readingMatches(parseSentence('What had she expected?'), []), false)
 })

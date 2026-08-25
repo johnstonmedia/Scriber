@@ -159,6 +159,67 @@ export type ObservedGap = {
   ms: number
 }
 
+/**
+ * One update from the recogniser: how many words it had heard, and when.
+ *
+ * This is the instrument, and choosing it was the one real decision in this
+ * file. There is a more accurate one, and it was built and then deleted:
+ * reading the microphone level directly through the Web Audio API measures a
+ * silence to the millisecond, where this is accurate only to a recogniser tick
+ * and carries whatever latency the recogniser adds.
+ *
+ * It is still the right instrument, because it is the one the exam room has.
+ * A model trained on precise silences and then asked to judge recogniser
+ * timings is being asked about a distribution it has never seen, and would be
+ * confidently wrong in a way that is very hard to see. Training and inference
+ * measuring the same thing the same way matters more here than either of them
+ * being accurate, and the latency largely cancels anyway: durations are
+ * normalised by the student's own comma pause, measured with this same
+ * instrument.
+ */
+export type RecogniserUpdate = { words: number; at: number }
+
+/** Silences, read off the intervals between recogniser updates. */
+export function observedGaps(updates: RecogniserUpdate[]): ObservedGap[] {
+  const gaps: ObservedGap[] = []
+  for (let i = 1; i < updates.length; i++) {
+    const previous = updates[i - 1]!
+    const current = updates[i]!
+    // An update that added no words says nothing about where a silence fell.
+    if (current.words <= previous.words) continue
+    gaps.push({ afterWordIndex: previous.words - 1, ms: Math.max(0, current.at - previous.at) })
+  }
+  return gaps
+}
+
+/**
+ * Did they read the sentence in front of them?
+ *
+ * Worth checking, and not only against mischief. A student who loses their
+ * place, reads a word wrong, or gets recognised badly produces gap timings
+ * that line up with a sentence they did not say — and those would be filed
+ * against the wrong words and taught to everybody. Rejecting the round and
+ * asking for it again costs ten seconds.
+ */
+export function readingMatches(parsed: ParsedSentence, heard: string[]): boolean {
+  if (heard.length === 0) return false
+  const expected = parsed.words.map((word) => word.toLowerCase().replace(/[^a-z'’-]/g, ''))
+  const said = heard.map((word) => word.toLowerCase().replace(/[^a-z'’-]/g, '')).filter(Boolean)
+  if (Math.abs(said.length - expected.length) > 3) return false
+
+  // Matched in order, allowing the odd missing or extra word — the recogniser
+  // drops one often enough that exactness would reject good readings.
+  let cursor = 0
+  let matched = 0
+  for (const word of expected) {
+    const found = said.indexOf(word, cursor)
+    if (found === -1) continue
+    matched++
+    cursor = found + 1
+  }
+  return matched / expected.length >= 0.75
+}
+
 export type Alignment = {
   /** Boundary index -> the silence heard there, in milliseconds. */
   gapAt: number[]

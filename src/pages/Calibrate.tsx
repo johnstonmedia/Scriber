@@ -1,45 +1,207 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 import {
-  CALIBRATION_PASSAGE,
   DEFAULT_CALIBRATION,
   deriveThresholds,
   type Calibration,
   type GapSample,
-  type MarkKind,
 } from '../scribe/calibration'
-import { PauseMeter, noiseFloor, segmentGaps, type Level } from '../scribe/pauseMeter'
+import {
+  alignGaps,
+  gradeRound,
+  nextSentence,
+  observedGaps,
+  parseSentence,
+  readingMatches,
+  roundSamples,
+  type DrillSentence,
+  type ParsedSentence,
+  type RecogniserUpdate,
+  type RoundResult,
+} from '../scribe/drill'
+import { MARK_LABEL, type PunctuationModel, type PunctuationSample } from '../scribe/punctuation'
+import { Dictation, speechRecognitionSupported } from '../scribe/speech'
+import { contributeRound, loadPunctuationModel, refreshPunctuationModel } from '../lib/punctuationModel'
 
-/** The marks inside one line, in the order a reader will pass them. */
-function marksIn(line: string): MarkKind[] {
-  const marks: MarkKind[] = []
-  for (const char of line) if (char === ',') marks.push('comma')
-  return marks
-}
-
-type LineState = 'waiting' | 'listening' | 'kept' | 'unclear'
+type Stage = 'ready' | 'listening' | 'marked'
 
 /**
- * Teaching the writer how one student's pauses sound.
+ * Teaching the writer where punctuation goes.
  *
- * Read one line at a time rather than the whole passage. Doing it line by
- * line is what makes the measurement honest: within a single line we know
- * exactly how many pauses to expect, so a reading that produces a different
- * number can be thrown away instead of guessed at. Across a whole passage
- * there is no way to tell a missed pause from an extra one.
+ * The shape of this screen is the point of it. A sentence goes up, the student
+ * reads it aloud, and the writer commits to what it heard *before* the answer
+ * is shown — then both are put side by side. That ordering is what makes it
+ * teaching rather than a demonstration: the writer is wrong in front of you,
+ * about a sentence you can see, so what it got wrong is legible instead of
+ * being a vague sense that the punctuation is off.
+ *
+ * What it learns goes two places. The student's own pauses set their own
+ * thresholds, which is theirs alone. The graded boundaries go to the shared
+ * model, so a student who spends ten minutes here has improved the writer for
+ * every student on the site — which is the only thing that makes ten minutes
+ * of somebody's afternoon worth asking for.
  */
 export function Calibrate() {
   const { user, settings, saveSettings, calibrationTester, loading } = useAuth()
-  const [index, setIndex] = useState(0)
-  const [state, setState] = useState<LineState>('waiting')
-  const [samples, setSamples] = useState<GapSample[]>([])
-  const [problem, setProblem] = useState<string | null>(null)
-  const [saved, setSaved] = useState<Calibration | null>(null)
-  const meterRef = useRef<PauseMeter | null>(null)
-  const floorRef = useRef<number>(0)
 
-  useEffect(() => () => meterRef.current?.stop(), [])
+  const [sentence, setSentence] = useState<DrillSentence | null>(null)
+  const [parsed, setParsed] = useState<ParsedSentence | null>(null)
+  const [stage, setStage] = useState<Stage>('ready')
+  const [result, setResult] = useState<RoundResult | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+  const [done, setDone] = useState<string[]>([])
+  const [rounds, setRounds] = useState(0)
+  const [contributed, setContributed] = useState(0)
+  const [observations, setObservations] = useState<number | null>(null)
+  const [saved, setSaved] = useState<Calibration | null>(null)
+  const [heardText, setHeardText] = useState('')
+
+  /** Every gap this student has been measured on, across the whole session. */
+  const gapSamples = useRef<GapSample[]>([])
+  /** How many words the recogniser had, and when — the raw timing. */
+  const updates = useRef<RecogniserUpdate[]>([])
+  const heardRef = useRef('')
+  const dictation = useRef<Dictation | null>(null)
+  const modelRef = useRef<PunctuationModel | undefined>(undefined)
+
+  const supported = useRef(speechRecognitionSupported()).current
+
+  useEffect(() => {
+    void loadPunctuationModel().then((model) => {
+      modelRef.current = model
+      setObservations(model.observations)
+    })
+  }, [])
+
+  useEffect(() => () => dictation.current?.dispose(), [])
+
+  const pick = useCallback((finished: string[]) => {
+    const next = nextSentence(finished)
+    setSentence(next)
+    setParsed(parseSentence(next.text))
+    setResult(null)
+    setHeardText('')
+    setProblem(null)
+    setStage('ready')
+  }, [])
+
+  useEffect(() => {
+    if (!sentence) pick([])
+  }, [sentence, pick])
+
+  /**
+   * Note what the recogniser has heard so far, and when.
+   *
+   * Both interim and final results land here. Interim ones are what carry the
+   * timing — a final arrives in one lump seconds later and would tell us only
+   * that the whole sentence took four seconds.
+   */
+  const noteTranscript = useCallback((text: string) => {
+    const words = text.trim().split(/\s+/).filter(Boolean)
+    if (words.length === 0) return
+    heardRef.current = text
+    const last = updates.current[updates.current.length - 1]
+    if (last && last.words === words.length) return
+    updates.current.push({ words: words.length, at: Date.now() })
+  }, [])
+
+  function listen() {
+    if (!supported) {
+      setProblem(
+        'This browser cannot listen for speech. Chrome, Edge or Safari can — the drill needs to hear you read.',
+      )
+      return
+    }
+    updates.current = []
+    heardRef.current = ''
+    setProblem(null)
+    setResult(null)
+    setStage('listening')
+
+    const instance = new Dictation({
+      onFinal: noteTranscript,
+      onInterim: noteTranscript,
+      onError: (message) => {
+        setProblem(message)
+        setStage('ready')
+      },
+      onListeningChange: () => {},
+    }, settings.recogniserLanguage)
+    dictation.current = instance
+    instance.start()
+  }
+
+  async function finishReading() {
+    dictation.current?.stop()
+    dictation.current?.dispose()
+    dictation.current = null
+
+    if (!parsed || !sentence) return
+    const heard = heardRef.current.trim()
+    setHeardText(heard)
+    const words = heard.split(/\s+/).filter(Boolean)
+
+    if (!readingMatches(parsed, words)) {
+      setStage('ready')
+      setProblem(
+        words.length === 0
+          ? "We didn't hear anything. Check the microphone in your browser's address bar, then read it again."
+          : 'That did not come through as the sentence on the screen. Read it once more, at the pace you would use in an exam.',
+      )
+      return
+    }
+
+    const alignment = alignGaps(parsed, observedGaps(updates.current))
+    const graded = gradeRound(parsed, alignment, settings.calibration, modelRef.current)
+    setResult(graded)
+    setStage('marked')
+    setRounds((n) => n + 1)
+
+    // The student's own pauses, for their own thresholds. Only the boundaries
+    // that carry a mark say anything about what a comma or a full stop sounds
+    // like for this person.
+    gapSamples.current = [
+      ...gapSamples.current,
+      ...parsed.boundaries.flatMap((boundary, index) => {
+        const ms = alignment.gapAt[index] ?? 0
+        if (boundary.mark === 'none' || ms <= 0) return []
+        // A question mark ends a sentence; the rise in the voice is what tells
+        // them apart, and that is not something this measures.
+        const expected = boundary.mark === 'question' ? 'sentence' : boundary.mark
+        return [{ ms, expected } as GapSample]
+      }),
+    ]
+
+    void offer(roundSamples(parsed, alignment))
+  }
+
+  /** Send the round to the shared model. Never blocks the student. */
+  async function offer(samples: PunctuationSample[]) {
+    try {
+      const response = await contributeRound(samples, settings.calibration)
+      setContributed((n) => n + response.accepted)
+      if (response.observations !== null) setObservations(response.observations)
+    } catch {
+      // A round that could not be shared still taught the student something,
+      // and telling them their practice "failed" because of a network is both
+      // untrue and discouraging.
+    }
+  }
+
+  async function finish() {
+    const derived = deriveThresholds(gapSamples.current)
+    modelRef.current = await refreshPunctuationModel()
+    setObservations(modelRef.current.observations)
+    if (!derived.ok) {
+      setProblem(derived.reason)
+      setSaved(null)
+      setStage('marked')
+      return
+    }
+    setSaved(derived.calibration)
+    await saveSettings({ calibration: derived.calibration })
+  }
 
   if (loading) return null
 
@@ -67,125 +229,31 @@ export function Calibrate() {
     )
   }
 
-  const line = CALIBRATION_PASSAGE[index]
-  const done = index >= CALIBRATION_PASSAGE.length
-
-  async function listen() {
-    setProblem(null)
-    setState('listening')
-    try {
-      const meter = new PauseMeter()
-      meterRef.current = meter
-      await meter.start()
-      // A second of the room before they speak, so the threshold is set from
-      // this room rather than from an assumption about rooms.
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      floorRef.current = noiseFloor(meter.take())
-    } catch {
-      setState('waiting')
-      setProblem(
-        "We couldn't reach your microphone. Check the permission in your browser's address bar, then try again.",
-      )
-    }
-  }
-
-  function finishLine() {
-    const meter = meterRef.current
-    if (!meter || line === undefined) return
-    const levels: Level[] = meter.take()
-    meter.stop()
-    meterRef.current = null
-
-    const expected = marksIn(line)
-    const { gaps, speechRuns } = segmentGaps(levels, {
-      floor: floorRef.current,
-      minGapMs: 120,
-      minSpeechMs: 80,
-    })
-
-    // The count has to match exactly. A reading with the wrong number of
-    // pauses cannot be lined up against the line's commas, and a guess here
-    // would end up as punctuation in somebody's exam.
-    if (speechRuns === 0) {
-      setState('unclear')
-      setProblem("We didn't hear anything. Check your microphone is the one you're speaking into.")
-      return
-    }
-    if (gaps.length !== expected.length) {
-      setState('unclear')
-      setProblem(
-        gaps.length > expected.length
-          ? 'That had more pauses in it than the line has commas. Read it straight through, pausing only where the punctuation is.'
-          : "We didn't hear a pause at every comma. Read it at the pace you'd use in an exam rather than quickly.",
-      )
-      return
-    }
-
-    setSamples((current) => [
-      ...current,
-      ...gaps.map((ms, i) => ({ ms, expected: expected[i]! })),
-      // The end of a line is a full stop, and the pause after it is the one
-      // that separates a sentence from the next.
-      ...(index < CALIBRATION_PASSAGE.length - 1
-        ? [{ ms: Math.max(...gaps, 0) * 2, expected: 'sentence' as const }]
-        : []),
-    ])
-    setState('kept')
-    setProblem(null)
-  }
-
-  function nextLine() {
-    setIndex((i) => i + 1)
-    setState('waiting')
-  }
-
-  async function finish() {
-    const result = deriveThresholds(samples)
-    if (!result.ok) {
-      setProblem(result.reason)
-      setSaved(null)
-      return
-    }
-    setSaved(result.calibration)
-    await saveSettings({ calibration: result.calibration })
-  }
-
   const existing = settings.calibration ?? null
 
-  return (
-    <div className="page" style={{ maxWidth: 720 }}>
-      <div className="page-head">
-        <div className="grow">
-          <h1>Teaching your writer</h1>
-          <p className="muted">
-            A real writer learns what your pauses mean within a few minutes of meeting you. Read
-            these four lines aloud and yours will too.
-          </p>
+  if (saved) {
+    return (
+      <div className="page" style={{ maxWidth: 720 }}>
+        <div className="page-head">
+          <div className="grow">
+            <h1>Your writer has it.</h1>
+          </div>
         </div>
-      </div>
-
-      {existing && !saved && (
-        <div className="alert alert-info" style={{ marginBottom: 22 }}>
-          Your writer already knows your pauses, from{' '}
-          {new Date(existing.capturedAt).toLocaleDateString('en-AU')}. Reading again replaces that
-          — worth doing if your voice has changed, or if you did the first one somewhere noisy.
-        </div>
-      )}
-
-      {problem && (
-        <div className="alert alert-warn" style={{ marginBottom: 22 }}>
-          {problem}
-        </div>
-      )}
-
-      {saved ? (
         <div className="card card-pad stack gap-3">
-          <h2>Done — your writer has it.</h2>
           <p>
             It now waits about <strong>{saved.comma}ms</strong> before deciding a pause was a
             comma, and <strong>{saved.sentence}ms</strong> before deciding it was a full stop.
             Those are your numbers, measured from the way you actually read.
           </p>
+          {contributed > 0 && (
+            <p>
+              You also taught the shared writer <strong>{contributed}</strong> new readings, which
+              every student on Scriber gets the benefit of.{' '}
+              {observations !== null && (
+                <span className="muted">It has {observations.toLocaleString('en-AU')} in total.</span>
+              )}
+            </p>
+          )}
           <p className="small muted">
             This only changes anything under the HSC writer rules, where a writer may add
             punctuation. Under the NAPLAN and JCQ scribe protocol you dictate every mark yourself
@@ -199,66 +267,208 @@ export function Calibrate() {
               className="btn btn-ghost"
               onClick={() => {
                 setSaved(null)
-                setSamples([])
-                setIndex(0)
-                setState('waiting')
+                gapSamples.current = []
+                setRounds(0)
+                setDone([])
+                pick([])
               }}
             >
-              Read it again
+              Keep practising
             </button>
           </div>
         </div>
-      ) : done ? (
-        <div className="card card-pad stack gap-3">
-          <h2>That's all four.</h2>
+      </div>
+    )
+  }
+
+  return (
+    <div className="page" style={{ maxWidth: 760 }}>
+      <div className="page-head">
+        <div className="grow">
+          <h1>Teaching your writer</h1>
           <p className="muted">
-            {samples.length} pauses measured. If they separate cleanly, your writer will use them;
-            if they don't, it will say so and keep its usual pacing rather than guess.
+            Read each sentence aloud. Your writer takes it down without seeing the answer, and then
+            you both find out how it did.
           </p>
-          <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} onClick={() => void finish()}>
-            See what it learned
-          </button>
         </div>
-      ) : (
-        <div className="card card-pad stack gap-4">
-          <div className="row gap-2 wrap" style={{ alignItems: 'baseline' }}>
-            <span className="badge badge-accent">
-              Line {index + 1} of {CALIBRATION_PASSAGE.length}
-            </span>
-            {state === 'listening' && <span className="badge badge-live">Listening</span>}
-          </div>
+      </div>
 
-          <p className="calibration-line">{line}</p>
-
-          <p className="small muted">
-            Read it the way you would dictate in an exam — pause at the commas, and don't rush the
-            full stop. Nothing is recorded: we measure only how loud it is, moment to moment.
-          </p>
-
-          {state === 'waiting' || state === 'unclear' ? (
-            <button className="btn btn-primary btn-lg" style={{ alignSelf: 'flex-start' }} onClick={() => void listen()}>
-              {state === 'unclear' ? 'Try this line again' : "I'm ready — start listening"}
-            </button>
-          ) : state === 'listening' ? (
-            <button className="btn btn-lg" style={{ alignSelf: 'flex-start' }} onClick={finishLine}>
-              Done reading this line
-            </button>
-          ) : (
-            <div className="row gap-2 wrap">
-              <span className="badge badge-good">Got it</span>
-              <button className="btn btn-primary" onClick={nextLine}>
-                {index === CALIBRATION_PASSAGE.length - 1 ? 'Finish' : 'Next line'}
-              </button>
-            </div>
-          )}
+      {existing && rounds === 0 && (
+        <div className="alert alert-info" style={{ marginBottom: 22 }}>
+          Your writer already knows your pauses, from{' '}
+          {new Date(existing.capturedAt).toLocaleDateString('en-AU')}. Practising again replaces
+          that — worth doing if your voice has changed, or if you did the first one somewhere noisy.
         </div>
       )}
 
+      {problem && (
+        <div className="alert alert-warn" style={{ marginBottom: 22 }}>
+          {problem}
+        </div>
+      )}
+
+      <div className="card card-pad stack gap-4">
+        <div className="row gap-2 wrap" style={{ alignItems: 'baseline' }}>
+          <span className="badge badge-accent">Sentence {rounds + (stage === 'marked' ? 0 : 1)}</span>
+          {stage === 'listening' && <span className="badge badge-live">Listening</span>}
+          {sentence && <span className="small muted">{sentence.focus}</span>}
+        </div>
+
+        {/*
+          Punctuation is stripped while they read it. Left in, the student
+          performs the commas they can see, and the writer learns what somebody
+          sounds like reading punctuation aloud rather than speaking.
+        */}
+        <p className="calibration-line">
+          {stage === 'marked' && result ? result.expected : parsed?.words.join(' ')}
+        </p>
+
+        {stage !== 'marked' && (
+          <p className="small muted">
+            Read it as if you were dictating it, not as if you were reading it out. Nothing is
+            recorded — only how long you paused, and the words of this sentence.
+          </p>
+        )}
+
+        {stage === 'ready' && (
+          <button className="btn btn-primary btn-lg" style={{ alignSelf: 'flex-start' }} onClick={listen}>
+            {rounds === 0 ? "I'm ready — start listening" : 'Read this one'}
+          </button>
+        )}
+
+        {stage === 'listening' && (
+          <button className="btn btn-lg" style={{ alignSelf: 'flex-start' }} onClick={() => void finishReading()}>
+            Done reading
+          </button>
+        )}
+
+        {stage === 'marked' && result && (
+          <RoundReport
+            result={result}
+            heard={heardText}
+            onNext={() => {
+              const finished = sentence ? [...done, sentence.id] : done
+              setDone(finished)
+              pick(finished)
+            }}
+            onFinish={() => void finish()}
+            canFinish={gapSamples.current.filter((s) => s.expected === 'comma').length >= 3}
+          />
+        )}
+      </div>
+
       <p className="small muted" style={{ marginTop: 22 }}>
         Signed in as {user?.email}. Your writer's current pacing:{' '}
-        {existing ? `${existing.comma}ms / ${existing.sentence}ms` : `${DEFAULT_CALIBRATION.comma}ms / ${DEFAULT_CALIBRATION.sentence}ms (the default)`}
+        {existing
+          ? `${existing.comma}ms / ${existing.sentence}ms`
+          : `${DEFAULT_CALIBRATION.comma}ms / ${DEFAULT_CALIBRATION.sentence}ms (the default)`}
+        {observations !== null && observations > 0 && (
+          <> · the shared writer has learned from {observations.toLocaleString('en-AU')} readings</>
+        )}
         .
       </p>
+    </div>
+  )
+}
+
+/**
+ * What the writer wrote, against what the sentence says.
+ *
+ * Both are shown in full even when they are identical — a student who got it
+ * right should see that they got it right in the same shape they would have
+ * seen a mistake, rather than in a green tick that means nothing.
+ */
+function RoundReport({
+  result,
+  heard,
+  onNext,
+  onFinish,
+  canFinish,
+}: {
+  result: RoundResult
+  heard: string
+  onNext: () => void
+  onFinish: () => void
+  canFinish: boolean
+}) {
+  const perfect = result.produced === result.expected
+  const mistakes = result.verdicts.filter((verdict) => !verdict.correct)
+
+  return (
+    <div className="stack gap-4">
+      <div className="stack gap-2">
+        <span className="small muted">Your writer wrote</span>
+        <p className={`calibration-line ${perfect ? 'alert-good' : ''}`}>{result.produced}</p>
+      </div>
+
+      {!perfect && (
+        <div className="stack gap-2">
+          <span className="small muted">The sentence reads</span>
+          <p className="calibration-line">{result.expected}</p>
+        </div>
+      )}
+
+      <p>
+        {perfect
+          ? 'Every mark in the right place.'
+          : `${result.correct} of ${result.total} right. ` +
+            (result.overWrites > 0
+              ? `${result.overWrites} mark${result.overWrites === 1 ? '' : 's'} it added that shouldn't be there`
+              : '') +
+            (result.overWrites > 0 && result.underWrites > 0 ? ', and ' : '') +
+            (result.underWrites > 0
+              ? `${result.underWrites} it missed`
+              : '') +
+            '.'}
+      </p>
+
+      {mistakes.length > 0 && (
+        <table className="table small">
+          <thead>
+            <tr>
+              <th scope="col">After</th>
+              <th scope="col">You paused</th>
+              <th scope="col">It wrote</th>
+              <th scope="col">Should be</th>
+            </tr>
+          </thead>
+          <tbody>
+            {mistakes.map((verdict, index) => (
+              <tr key={index}>
+                <td>“{verdict.before}”</td>
+                <td>{verdict.ms > 0 ? `${Math.round(verdict.ms)}ms` : 'not at all'}</td>
+                <td>{MARK_LABEL[verdict.produced]}</td>
+                <td>{MARK_LABEL[verdict.expected]}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {heard && (
+        <details>
+          <summary className="small muted">What the microphone heard</summary>
+          <p className="small muted" style={{ marginTop: 8 }}>
+            {heard}
+          </p>
+        </details>
+      )}
+
+      <div className="row gap-2 wrap">
+        <button className="btn btn-primary" onClick={onNext}>
+          Next sentence
+        </button>
+        {canFinish && (
+          <button className="btn btn-ghost" onClick={onFinish}>
+            That's enough — see what it learned
+          </button>
+        )}
+      </div>
+      {!canFinish && (
+        <p className="small muted">
+          A few more sentences and there will be enough pauses to set your writer's own pacing.
+        </p>
+      )}
     </div>
   )
 }

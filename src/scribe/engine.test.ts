@@ -10,6 +10,8 @@ import {
   type RuleProfile,
   type ScribeState,
 } from './engine.js'
+import { DEFAULT_CALIBRATION } from './calibration.js'
+import { EMPTY_MODEL, train, type PunctuationModel } from './punctuation.js'
 
 /** Dictate a series of spoken bursts and return the finished state. */
 function dictate(bursts: string[], profile: RuleProfile = 'strict'): ScribeState {
@@ -174,4 +176,132 @@ test('insights flag a missing full stop and reward paragraphing', () => {
 
   const tidy = dictate(['point one full stop', 'new paragraph', 'point two full stop'])
   assert.ok(buildInsights(tidy, 'strict').some((i) => i.message.includes('2 paragraphs')))
+})
+
+// ------------------------------- punctuating what the student did not say
+
+/**
+ * Dictate with a measured silence before each burst after the first.
+ *
+ * `closeSentence` is false for every burst and true only for the last, which
+ * is how the exam room drives it once the model is supplying punctuation. The
+ * old behaviour — closing at every burst — put a full stop wherever the
+ * recogniser happened to finalise, which is mid-sentence more often than not.
+ */
+function dictateWithPauses(
+  bursts: Array<{ text: string; pauseMs?: number }>,
+  calibration = DEFAULT_CALIBRATION,
+  model?: PunctuationModel,
+): ScribeState {
+  return bursts.reduce<ScribeState>(
+    (state, burst, index) =>
+      applyUtterance(state, burst.text, 'assisted', undefined, index === bursts.length - 1, {
+        gapMs: burst.pauseMs ?? 0,
+        calibration,
+        model,
+      }).state,
+    createState(),
+  )
+}
+
+test('a sentence-length silence becomes a full stop', () => {
+  const state = dictateWithPauses([
+    { text: 'the road was long' },
+    { text: 'she stopped at the gate', pauseMs: 900 },
+  ])
+  assert.equal(render(state.atoms), 'The road was long. She stopped at the gate.')
+})
+
+test('a comma-length silence becomes a comma, and does not capitalise', () => {
+  const state = dictateWithPauses([
+    { text: 'the road was long' },
+    { text: 'and the light was going', pauseMs: 420 },
+  ])
+  assert.equal(render(state.atoms), 'The road was long, and the light was going.')
+})
+
+test('a short silence gets nothing at all', () => {
+  const state = dictateWithPauses([
+    { text: 'he wrote it' },
+    { text: 'quickly', pauseMs: 140 },
+  ])
+  assert.equal(render(state.atoms), 'He wrote it quickly.')
+})
+
+test('a clause that opened with an interrogative closes with a question mark', () => {
+  const state = dictateWithPauses([
+    { text: 'what had she expected' },
+    { text: 'nothing in the end', pauseMs: 900 },
+  ])
+  assert.equal(render(state.atoms), 'What had she expected? Nothing in the end.')
+})
+
+test('the writer does not punctuate over the top of the student', () => {
+  // The student dictated the mark themselves. Whatever the silence was, the
+  // writer has nothing to decide — and must not add a second mark.
+  const state = dictateWithPauses([
+    { text: 'the road was long' },
+    { text: 'full stop', pauseMs: 900 },
+    { text: 'she stopped', pauseMs: 900 },
+  ])
+  assert.equal(render(state.atoms), 'The road was long. She stopped.')
+  // One full stop, not two: the writer did not add its own on top.
+  assert.equal(state.stats.sentences, 2)
+})
+
+test('the strict profile ignores the pause entirely', () => {
+  const state = [
+    { text: 'the road was long' },
+    { text: 'she stopped at the gate', pauseMs: 2000 },
+  ].reduce<ScribeState>(
+    (current, burst) =>
+      applyUtterance(current, burst.text, 'strict', undefined, true, {
+        gapMs: burst.pauseMs ?? 0,
+        calibration: DEFAULT_CALIBRATION,
+      }).state,
+    createState(),
+  )
+  assert.equal(render(state.atoms), 'the road was long she stopped at the gate')
+})
+
+test('with no assist at all the writer behaves as it always did', () => {
+  // Closing at every burst boundary, which is what shipped before the model
+  // existed — and precisely why full stops landed mid-sentence.
+  assert.equal(
+    written(['the road was long', 'she stopped at the gate'], 'assisted'),
+    'The road was long. She stopped at the gate.',
+  )
+})
+
+test('every mark it supplies is counted as its own, not the student credit', () => {
+  const state = dictateWithPauses([
+    { text: 'the road was long' },
+    { text: 'she stopped', pauseMs: 900 },
+  ])
+  assert.ok(state.stats.assistedInsertions >= 2)
+  assert.ok(
+    buildInsights(state, 'assisted').some((i) => i.message.includes('supplied')),
+  )
+})
+
+test('a trained model can overrule the thresholds inside the engine', () => {
+  const bursts = [{ text: 'he wrote it quickly' }, { text: 'and never went back', pauseMs: 500 }]
+  // Untrained, a half-second silence before "and" reads as a comma.
+  assert.equal(
+    render(dictateWithPauses(bursts).atoms),
+    'He wrote it quickly, and never went back.',
+  )
+
+  const taught = train(
+    EMPTY_MODEL,
+    Array.from({ length: 3000 }, () => ({
+      context: { ms: 500, before: 'quickly', after: 'and', clauseOpener: 'He' },
+      mark: 'none' as const,
+    })),
+    DEFAULT_CALIBRATION,
+  )
+  assert.equal(
+    render(dictateWithPauses(bursts, DEFAULT_CALIBRATION, taught).atoms),
+    'He wrote it quickly and never went back.',
+  )
 })

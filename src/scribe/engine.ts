@@ -18,6 +18,14 @@ import {
   type CommandEntry,
   type PhraseIndex,
 } from './commands'
+import type { Calibration } from './calibration'
+import {
+  EMPTY_MODEL,
+  predictMark,
+  shouldWrite,
+  type Mark,
+  type PunctuationModel,
+} from './punctuation'
 
 export type RuleProfile = 'strict' | 'assisted'
 
@@ -184,6 +192,77 @@ function countCommand(state: ScribeState, entry: CommandEntry) {
 }
 
 /**
+ * What the writer needs in order to punctuate a pause it heard.
+ *
+ * Optional everywhere: with no `assist` the engine behaves exactly as it did
+ * before any of this existed, which is what keeps the strict profile — and
+ * every test written against it — untouched.
+ */
+export type PunctuationAssist = {
+  /** The silence between the previous burst and this one, in milliseconds. */
+  gapMs: number
+  calibration: Calibration | null
+  model?: PunctuationModel
+}
+
+/** The word that opened the sentence in progress, for spotting a question. */
+function currentClauseOpener(atoms: Atom[]): string | null {
+  for (let i = atoms.length - 1; i >= 0; i--) {
+    const atom = atoms[i]!
+    if (atom.kind === 'break' || (atom.kind === 'punct' && atom.terminal)) {
+      const next = atoms[i + 1]
+      return next?.kind === 'word' ? next.text : null
+    }
+  }
+  const first = atoms[0]
+  return first?.kind === 'word' ? first.text : null
+}
+
+/**
+ * Punctuate the silence the student just left, if the model is sure enough.
+ *
+ * The mark lands at the end of what was already written, not at the start of
+ * what is arriving — a pause belongs to the words before it. Nothing is
+ * written unless there is a word to attach it to and the prediction clears the
+ * bar in `shouldWrite`, which is deliberately harder to clear for a mark than
+ * for silence.
+ */
+function assistPunctuation(state: ScribeState, assist: PunctuationAssist, nextWord: string): void {
+  const last = state.atoms[state.atoms.length - 1]
+  if (!last || last.kind !== 'word') return
+  if (assist.gapMs <= 0) return
+
+  const prediction = predictMark(
+    {
+      ms: assist.gapMs,
+      before: last.text,
+      after: nextWord,
+      clauseOpener: currentClauseOpener(state.atoms),
+    },
+    assist.calibration,
+    assist.model ?? EMPTY_MODEL,
+  )
+  if (!shouldWrite(prediction)) return
+
+  writeMark(state, prediction.mark)
+}
+
+function writeMark(state: ScribeState, mark: Mark): void {
+  if (mark === 'paragraph') {
+    pushAtom(state, { kind: 'break', action: 'paragraph' })
+    state.stats.paragraphs++
+    state.stats.assistedInsertions++
+    return
+  }
+  const text = mark === 'comma' ? ',' : mark === 'question' ? '?' : '.'
+  const terminal = mark !== 'comma'
+  pushAtom(state, { kind: 'punct', text, attach: 'left', terminal })
+  state.stats.punctuationMarks++
+  if (terminal) state.stats.sentences++
+  state.stats.assistedInsertions++
+}
+
+/**
  * In assisted mode the writer is permitted to add punctuation and capitals
  * without direction. We only do the two things a human writer reliably does:
  * capitalise the opening of a sentence, and close an unfinished final sentence.
@@ -233,6 +312,12 @@ export function applyUtterance(
    * simpler integration — gets the closing behaviour without extra plumbing.
    */
   closeSentence = true,
+  /**
+   * The pause that preceded this burst, and what the writer has learned about
+   * pauses. Assisted mode only — under the strict profile the student dictates
+   * every mark and the writer supplies none, so this is ignored there.
+   */
+  assist?: PunctuationAssist,
 ): ApplyResult {
   const state: ScribeState = {
     ...previous,
@@ -246,6 +331,15 @@ export function applyUtterance(
 
   state.utterance = utteranceKey ?? state.utterance + 1
   const words = tokenise(text)
+
+  // The silence before this burst is punctuated before a word of it is
+  // written, because the mark belongs to the sentence that has just ended, not
+  // to the one starting. Skipped when the burst opens with a spoken command —
+  // if the student said "full stop" themselves, the writer has nothing to
+  // decide and no business guessing over the top of them.
+  if (profile === 'assisted' && assist && words.length > 0 && !matchPhraseAt(words, 0)) {
+    assistPunctuation(state, assist, words[0]!)
+  }
 
   for (let i = 0; i < words.length; ) {
     // Longest-match: "question mark" must beat "question".

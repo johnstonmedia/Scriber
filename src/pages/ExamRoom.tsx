@@ -36,13 +36,15 @@ import { OrgPaperViewer } from '../components/OrgPaperViewer'
 import { Dictation, readAloud, speechRecognitionSupported } from '../scribe/speech'
 import {
   applyUtterance,
-  chunkUtterance,
   createState,
   lastSentences,
   render,
   type ScribeEvent,
   type ScribeState,
 } from '../scribe/engine'
+import { absorbFinal, absorbInterim, createStream, resetSegment } from '../scribe/stream'
+import { EMPTY_MODEL, type PunctuationModel } from '../scribe/punctuation'
+import { loadPunctuationModel } from '../lib/punctuationModel'
 import {
   answerSpelling,
   createMemory,
@@ -201,6 +203,24 @@ export function ExamRoom() {
   /** Set below — lets the dictation handler answer an open spelling question. */
   const spellingAnswerRef = useRef<(spoken: string) => void>(() => {})
 
+  /**
+   * Which of the recogniser's provisional words have already gone to the
+   * writer — see scribe/stream.ts. This is what lets the pen start moving
+   * while the student is still talking instead of waiting for Chrome to
+   * finalise a whole clause several seconds after it was spoken.
+   */
+  const streamRef = useRef(createStream())
+  /**
+   * When the last words reached the writer. The silence since is what the
+   * punctuation model reads, and it is measured here — at the microphone —
+   * rather than where the words are written, because the writer is
+   * deliberately a beat behind and a pause measured there would be a
+   * measurement of the queue rather than of the student.
+   */
+  const lastHeardAt = useRef<number | null>(null)
+  /** The pooled punctuation model, fetched once. */
+  const modelRef = useRef<PunctuationModel>(EMPTY_MODEL)
+
   // Timing is driven from a wall-clock deadline so a busy tab can't drift. The
   // deadline itself lives in a ref and its display in the isolated <ExamClock>
   // below — nothing about the countdown needs to live in this component's
@@ -262,6 +282,22 @@ export function ExamRoom() {
     : ((paperMeta?.workingMinutes ?? 40) + extraMinutes) * 60_000
 
   // ------------------------------------------------------------------- load
+
+  /**
+   * The shared punctuation model, fetched once and then left alone. It is only
+   * consulted under the assisted profile, but it is fetched either way — a
+   * student who switches profiles mid-session should not then wait on a
+   * network round trip with the microphone already live.
+   */
+  useEffect(() => {
+    let cancelled = false
+    void loadPunctuationModel().then((model) => {
+      if (!cancelled) modelRef.current = model
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!user) return
@@ -446,28 +482,47 @@ export function ExamRoom() {
   )
 
   /**
-   * Units the writer has committed to the page. Consecutive units from the same
-   * spoken burst go in together, so "scratch that" still rubs out the whole
-   * burst even though the writer wrote it down in pieces.
+   * Units the writer has committed to the page.
+   *
+   * Grouped two ways at once. Units from the same spoken burst go in together
+   * so "scratch that" still rubs out the whole burst even though the writer
+   * wrote it down in pieces — and a group is also cut wherever a unit carries
+   * a silence, because a pause is where punctuation is decided and burying one
+   * in the middle of a group would hide it from the writer.
+   *
+   * The sentence is closed only when the dictation genuinely ends. Closing it
+   * at every burst boundary is what used to put full stops mid-sentence: the
+   * recogniser ends a burst where it stops being sure, which has nothing to do
+   * with where the student stopped speaking. In assisted mode the model
+   * decides that from the pause instead.
    */
   const commit = useCallback(
     (units: PendingUnit[], options?: { forceClose?: boolean }) => {
       if (units.length === 0) return
       let state = scribeRef.current
       const events: ScribeEvent[] = []
+      const assisted = effectiveRuleProfile === 'assisted'
 
       for (let i = 0; i < units.length; ) {
         const burst = units[i]!.burst
-        let end = i
-        while (end < units.length && units[end]!.burst === burst) end++
+        let end = i + 1
+        while (end < units.length && units[end]!.burst === burst && units[end]!.gapMs === 0) end++
         const group = units.slice(i, end)
         const text = group.map((unit) => unit.text).join(' ')
-        // The writer releases a burst's words a few at a time, at writing
-        // pace — an assisted-mode period belongs only on the piece that
-        // actually reaches the end of what the student said, never on every
-        // partial piece a drain tick happens to release.
-        const closeSentence = options?.forceClose || group[group.length - 1]!.lastOfBurst
-        const result = applyUtterance(state, text, effectiveRuleProfile, burst, closeSentence)
+        const lastGroup = end >= units.length
+        const closeSentence = assisted
+          ? Boolean(options?.forceClose) && lastGroup
+          : options?.forceClose || group[group.length - 1]!.lastOfBurst
+        const result = applyUtterance(
+          state,
+          text,
+          effectiveRuleProfile,
+          burst,
+          closeSentence,
+          assisted
+            ? { gapMs: units[i]!.gapMs, calibration: settings.calibration, model: modelRef.current }
+            : undefined,
+        )
         state = result.state
         events.push(...result.events)
         i = end
@@ -477,7 +532,7 @@ export function ExamRoom() {
       setScribe(state)
       handleEvents(events, state)
     },
-    [effectiveRuleProfile, handleEvents],
+    [effectiveRuleProfile, handleEvents, settings.calibration],
   )
 
   const handleMemoryEvents = useCallback(
@@ -504,41 +559,79 @@ export function ExamRoom() {
     [settings.readBackRate, toast],
   )
 
-  /** One finished burst of dictation, from the microphone or the keyboard. */
+  /**
+   * True when the writer is not taking anything down at all.
+   *
+   * In a live test, reading time is enforced rather than suggested, and a
+   * teacher-imposed pause means the writer has put their pen down — nothing
+   * said in the meantime is written.
+   */
+  const notWriting = useCallback(
+    () => (Boolean(testId) && phaseRef.current === 'reading') || pausedRef.current,
+    [testId],
+  )
+
+  /** Hand a group of settled units to the writer, with the silence before them. */
+  const offer = useCallback(
+    (units: string[], burst: number, lastOfBurst: boolean) => {
+      if (units.length === 0) return
+      const now = Date.now()
+      // Time since the last words arrived. On the very first group there is no
+      // "since" — a student thinking before they begin is not a pause inside a
+      // sentence that does not yet exist.
+      const gapMs = lastHeardAt.current === null ? 0 : now - lastHeardAt.current
+      lastHeardAt.current = now
+
+      const result = hear(memoryRef.current, units, now, burst, { gapMs, lastOfBurst })
+      memoryRef.current = result.memory
+      setMemory(result.memory)
+      handleMemoryEvents(result.events)
+    },
+    [handleMemoryEvents],
+  )
+
+  /**
+   * The recogniser has settled on this segment.
+   *
+   * Most of it has usually gone to the writer already, word by word, as the
+   * student was speaking — so this releases only whatever the final transcript
+   * says beyond that, and closes the segment.
+   */
   const write = useCallback(
-    (transcript: string) => {
+    (transcript: string, source: 'speech' | 'typed' = 'speech') => {
       const heard = transcript.trim()
       if (!heard) return
-
-      // In a live test, reading time is enforced, not just suggested — the
-      // writer simply won't take anything down until the teacher moves the
-      // class into working time. Same for a teacher-imposed pause: the writer
-      // has put their pen down and nothing said in the meantime is written.
-      if (testId && phaseRef.current === 'reading') return
-      if (pausedRef.current) return
+      // Typed dictation has no pauses in it. Whatever wall-clock time passed
+      // while somebody found the keyboard is not a silence the student left,
+      // and reading it as one would open a new paragraph every time.
+      if (source === 'typed') lastHeardAt.current = null
+      if (notWriting()) {
+        streamRef.current = resetSegment(streamRef.current)
+        return
+      }
 
       // The writer has stopped and asked a question — whatever you say next is
       // the answer to it, not more of your essay.
       if (memoryRef.current.spellCheck) {
+        streamRef.current = resetSegment(streamRef.current)
         spellingAnswerRef.current(heard)
         return
       }
 
-      const units = chunkUtterance(heard, effectiveRuleProfile)
-      if (units.length === 0) return
-
-      const burst = ++burstRef.current
-      const result = hear(memoryRef.current, units, Date.now(), burst)
-      memoryRef.current = result.memory
-      setMemory(result.memory)
-      handleMemoryEvents(result.events)
+      const burst = burstRef.current || ++burstRef.current
+      const result = absorbFinal(streamRef.current, heard, effectiveRuleProfile)
+      streamRef.current = result.state
+      offer(result.units, burst, true)
+      // The next words the recogniser hears begin a new burst, so a later
+      // "scratch that" rubs out that one rather than reaching back into this.
+      burstRef.current++
 
       logRef.current = [
         ...logRef.current,
         { at: Date.now() - startedAt.current, heard, commands: [] },
       ]
     },
-    [testId, effectiveRuleProfile, handleMemoryEvents],
+    [effectiveRuleProfile, notWriting, offer],
   )
 
   /**
@@ -704,29 +797,51 @@ export function ExamRoom() {
   }, [phase, commit, handleMemoryEvents])
 
   /**
-   * Chrome fires interim speech results many times a second while the student
-   * is actively talking — setting state on every single one re-renders this
-   * whole page (including the PDF pane) at that same rate. Throttled to a
-   * gentle 80ms, well under what's perceptible as "instant", except the empty
-   * string on stop, which clears immediately rather than lagging behind.
+   * Provisional speech, arriving many times a second while the student talks.
+   *
+   * Two things happen with it, and the second is the one that matters.
+   *
+   * The greyed-out live text is throttled to 80ms, because setting state on
+   * every result re-renders this whole page — the PDF pane included — at the
+   * recogniser's own rate.
+   *
+   * But the words themselves go to the writer immediately, as soon as they are
+   * settled enough to be safe (see scribe/stream.ts). That is not a throttling
+   * question, it is the whole fix: waiting for the recogniser to finalise
+   * meant the pen did not move until seconds after a clause was spoken, and
+   * then had a backlog to work through. Now the only lag between speaking and
+   * seeing the words is the writer's own pace, which is the thing a student is
+   * here to practise against.
    */
-  const handleInterim = useCallback((text: string) => {
-    const state = interimThrottle.current
-    state.latest = text
-    if (text === '') {
-      if (state.timer !== null) {
-        window.clearTimeout(state.timer)
-        state.timer = null
+  const handleInterim = useCallback(
+    (text: string) => {
+      const state = interimThrottle.current
+      state.latest = text
+
+      if (text === '') {
+        if (state.timer !== null) {
+          window.clearTimeout(state.timer)
+          state.timer = null
+        }
+        setInterim('')
+        return
       }
-      setInterim('')
-      return
-    }
-    if (state.timer !== null) return
-    state.timer = window.setTimeout(() => {
-      state.timer = null
-      setInterim(state.latest)
-    }, 80)
-  }, [])
+
+      if (!notWriting() && !memoryRef.current.spellCheck) {
+        const burst = burstRef.current || ++burstRef.current
+        const absorbed = absorbInterim(streamRef.current, text, effectiveRuleProfile)
+        streamRef.current = absorbed.state
+        offer(absorbed.units, burst, false)
+      }
+
+      if (state.timer !== null) return
+      state.timer = window.setTimeout(() => {
+        state.timer = null
+        setInterim(state.latest)
+      }, 80)
+    },
+    [effectiveRuleProfile, notWriting, offer],
+  )
 
   useEffect(() => {
     const instance = new Dictation(
@@ -1355,7 +1470,7 @@ export function ExamRoom() {
                 className="type-fallback"
                 onSubmit={(event) => {
                   event.preventDefault()
-                  write(typed)
+                  write(typed, 'typed')
                   setTyped('')
                 }}
               >

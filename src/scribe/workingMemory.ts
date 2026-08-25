@@ -104,6 +104,16 @@ export type PendingUnit = {
    * belongs here, never on every word that happens to be released this tick.
    */
   lastOfBurst: boolean
+  /**
+   * The silence the student left immediately before this unit, in
+   * milliseconds. Set on the first unit of each group heard and zero on the
+   * rest, since the words inside one group arrived together.
+   *
+   * Carried on the unit rather than measured when it is written, because it
+   * describes the speech and the writer is deliberately behind the speech. A
+   * pause measured at writing time would be a measurement of the queue.
+   */
+  gapMs: number
 }
 
 export type SpellCheck = {
@@ -185,9 +195,20 @@ export function hear(
   units: string[],
   now: number,
   burst = now,
+  options: {
+    /** The silence before this group of words. */
+    gapMs?: number
+    /**
+     * Whether this group finishes its burst. False while a burst is still
+     * arriving in pieces — speech reaches the writer as it is spoken rather
+     * than in whole clauses, so most groups are not the end of anything.
+     */
+    lastOfBurst?: boolean
+  } = {},
 ): { memory: MemoryState; events: MemoryEvent[] } {
   if (units.length === 0) return { memory, events: [] }
 
+  const closesBurst = options.lastOfBurst ?? true
   const next: MemoryState = {
     ...memory,
     pending: [
@@ -196,7 +217,8 @@ export function hear(
         text,
         heardAt: now,
         burst,
-        lastOfBurst: index === units.length - 1,
+        lastOfBurst: closesBurst && index === units.length - 1,
+        gapMs: index === 0 ? Math.max(0, options.gapMs ?? 0) : 0,
       })),
     ],
     stats: { ...memory.stats },
@@ -409,6 +431,10 @@ export function answerSpelling(
         heardAt: check.askedAt,
         burst: asked?.burst ?? check.askedAt,
         lastOfBurst: asked?.lastOfBurst ?? true,
+        // The pause belonged to the word the writer stopped on, and it has
+        // been sitting there being spelled out ever since — whatever silence
+        // preceded it is no longer a fact about the student's speech.
+        gapMs: 0,
       },
     ],
     events: [{ type: 'spellCheckResult', word: check.word, attempt, correct }],
@@ -436,6 +462,7 @@ export function skipSpelling(memory: MemoryState): {
         heardAt: check.askedAt,
         burst: asked?.burst ?? check.askedAt,
         lastOfBurst: asked?.lastOfBurst ?? true,
+        gapMs: 0,
       },
     ],
   }

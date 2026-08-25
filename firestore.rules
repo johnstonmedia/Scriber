@@ -101,6 +101,30 @@ service cloud.firestore {
       allow write: if isSiteAdmin();
     }
 
+    // The shared punctuation model, and the queue that feeds it.
+    //
+    // The model is what every exam room reads to decide where a full stop
+    // goes, so it is world-readable — it holds no student's words, only
+    // tallies over a closed list of function words and pause lengths, and a
+    // writer that could not fetch it would fall back to being worse for
+    // everyone. Nothing in the browser may write it: contributions go through
+    // api/punctuation/contribute, which checks that every word in a sample
+    // came from our own drill sentences before it is queued. A rule cannot
+    // perform that check — it would have to hold the sentence bank — so the
+    // rule here refuses all client writes and the route, running as admin,
+    // is the only way in. That is the trust boundary, stated in one line.
+    match /models/{modelId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // The contribution queue. Written by the API only, and never readable
+    // from a browser: a student's queued round is theirs, and there is no
+    // reason for one student to be able to enumerate another's practice.
+    match /punctuationContributions/{contributionId} {
+      allow read, write: if false;
+    }
+
     // A user asking for help after something failed. Write-only from their
     // side: anyone signed in can file one, nobody but a site admin can read
     // the queue back, so filing a report never exposes anything.

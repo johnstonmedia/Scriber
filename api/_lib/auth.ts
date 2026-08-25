@@ -32,6 +32,23 @@ export async function requireUser(req: VercelRequest): Promise<{ uid: string; em
   }
 }
 
+/**
+ * A signed-in person who also holds a platform administrator flag.
+ *
+ * The flag is read from Firestore rather than from a custom claim, so it is
+ * the same single source the security rules consult — a claim would be a
+ * second copy that could disagree with the rules, and the disagreement would
+ * be silent.
+ */
+export async function requireSiteAdmin(req: VercelRequest): Promise<{ uid: string }> {
+  const user = await requireUser(req)
+  const snapshot = await db().doc(`siteAdmins/${user.uid}`).get()
+  if (!snapshot.exists) {
+    throw new HttpError(403, 'not-admin', 'That is not yours to do.')
+  }
+  return { uid: user.uid }
+}
+
 // ------------------------------------------------------------- extension
 
 /**

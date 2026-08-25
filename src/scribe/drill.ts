@@ -19,7 +19,13 @@
  */
 
 import type { Calibration } from './calibration'
-import { predictMark, type Mark, type PunctuationSample, type PunctuationModel } from './punctuation'
+import {
+  MARK_TEXT,
+  predictMark,
+  type Mark,
+  type PunctuationSample,
+  type PunctuationModel,
+} from './punctuation'
 
 /** A sentence with its punctuation, as authored. */
 export type DrillSentence = {
@@ -373,7 +379,7 @@ export function gradeRound(
     })
 
     produced += boundary.before
-    produced += markText(prediction.mark)
+    produced += MARK_TEXT[prediction.mark]
     if (boundary.after) produced += prediction.mark === 'paragraph' ? '' : ' '
   })
 
@@ -389,25 +395,10 @@ export function gradeRound(
   }
 }
 
-function markText(mark: Mark): string {
-  switch (mark) {
-    case 'comma':
-      return ','
-    case 'sentence':
-      return '.'
-    case 'question':
-      return '?'
-    case 'paragraph':
-      return '\n\n'
-    default:
-      return ''
-  }
-}
-
 function renderExpected(parsed: ParsedSentence): string {
   let out = ''
   parsed.boundaries.forEach((boundary) => {
-    out += boundary.before + markText(boundary.mark)
+    out += boundary.before + MARK_TEXT[boundary.mark]
     if (boundary.after) out += boundary.mark === 'paragraph' ? '' : ' '
   })
   return out.trim()

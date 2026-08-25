@@ -1,11 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  CALIBRATION_PASSAGE,
   DEFAULT_CALIBRATION,
   classifyGap,
   deriveThresholds,
-  expectedGaps,
   separation,
   type GapSample,
 } from './calibration'
@@ -98,14 +96,4 @@ test('separation is 1 when the groups do not overlap and 0 when one is empty', (
   assert.ok(separation([100, 900], [200, 800]) < 1)
 })
 
-test('the passage yields the marks it visibly contains', () => {
-  const marks = expectedGaps()
-  assert.equal(marks.filter((m) => m === 'comma').length, 5)
-  // The final line's full stop is not a gap — there is nothing after it.
-  assert.equal(marks.filter((m) => m === 'sentence').length, CALIBRATION_PASSAGE.length - 1)
-})
 
-test('a question mark counts as a sentence pause, not a category of its own', () => {
-  const marks = expectedGaps(['Is it?', 'It is.'])
-  assert.deepEqual(marks, ['sentence'])
-})

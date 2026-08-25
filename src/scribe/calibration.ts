@@ -50,36 +50,6 @@ export const DEFAULT_CALIBRATION: Calibration = {
   capturedAt: '',
 }
 
-/** The passage a student reads. Its punctuation is what we measure against. */
-export const CALIBRATION_PASSAGE = [
-  'The road was long, and the light was already going.',
-  'She stopped at the gate, looked back once, and kept walking.',
-  'What had she expected?',
-  'Nothing, in the end, that she could have said out loud.',
-]
-
-/**
- * Where the marks fall in the passage above, as the gaps a reader will leave.
- * A paragraph break is deliberately not in the passage: asking somebody to
- * perform one while reading produces a pause they would never leave while
- * composing, so it is derived rather than measured — see `deriveThresholds`.
- */
-export function expectedGaps(passage: string[] = CALIBRATION_PASSAGE): MarkKind[] {
-  const marks: MarkKind[] = []
-  passage.forEach((line, index) => {
-    for (const char of line) {
-      if (char === ',') marks.push('comma')
-      // A question mark ends a sentence, and the pause after it is a
-      // sentence-length one — the rise in the voice is what distinguishes it,
-      // not the silence, and voice is not something this measures.
-      if (char === '.' || char === '?' || char === '!') {
-        if (index < passage.length - 1) marks.push('sentence')
-      }
-    }
-  })
-  return marks
-}
-
 const median = (values: number[]): number => {
   if (values.length === 0) return NaN
   const sorted = [...values].sort((a, b) => a - b)
@@ -171,13 +141,4 @@ export function classifyGap(ms: number, calibration: Calibration): MarkKind {
   if (ms >= calibration.sentence) return 'sentence'
   if (ms >= calibration.comma) return 'comma'
   return 'none'
-}
-
-/** Plain words for what was learned, for the student to read back. */
-export function describeCalibration(calibration: Calibration): string {
-  if (calibration.samples === 0) return 'Your writer is using its usual pacing.'
-  return (
-    `Your writer now knows that you pause about ${Math.round(calibration.comma / 10) * 10}ms at a comma ` +
-    `and about ${Math.round(calibration.sentence / 10) * 10}ms at a full stop.`
-  )
 }

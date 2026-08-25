@@ -81,10 +81,10 @@ test('when two silences compete for one boundary the longer one takes it', () =>
 
 // -------------------------------------------------------------------- samples
 
-test('every boundary becomes a sample, including the ones with no mark', () => {
+test('every measurable boundary becomes a sample, including the ones with no mark', () => {
   const parsed = parseSentence('The road was long, and the light was already going.')
   const samples = roundSamples(parsed, alignGaps(parsed, [{ afterWordIndex: 3, ms: 480 }]))
-  assert.equal(samples.length, 10)
+  assert.equal(samples.length, 9)
   assert.equal(samples.filter((s) => s.mark === 'none').length, 8)
   // The boundaries nobody paused at are taught as zero-length gaps, which is
   // exactly what stops the model marking every gap it meets.
@@ -119,12 +119,13 @@ test('a read with clean pauses is graded as mostly right', () => {
 
 test('grading names an invented mark separately from a missed one', () => {
   const parsed = parseSentence('He wrote it quickly and never went back to it.')
-  // The student took a breath mid-clause where no comma belongs, and ran
-  // straight off the end without pausing.
+  // The student took a breath mid-clause where no comma belongs.
   const alignment = alignGaps(parsed, [{ afterWordIndex: 3, ms: 500 }])
   const result = gradeRound(parsed, alignment, DEFAULT_CALIBRATION)
   assert.equal(result.overWrites, 1)
-  assert.equal(result.underWrites, 1)
+  // Nothing was missed: the only other mark is the closing full stop, which
+  // nobody could have heard and which is therefore not asked about.
+  assert.equal(result.underWrites, 0)
   assert.notEqual(result.produced, result.expected)
 })
 
@@ -210,4 +211,51 @@ test('reading a different sentence is rejected', () => {
 
 test('saying nothing is rejected', () => {
   assert.equal(readingMatches(parseSentence('What had she expected?'), []), false)
+})
+
+// ------------------------------------- the mark nobody can hear
+
+test('the last boundary in a reading is not measurable', () => {
+  const parsed = parseSentence('The road was long, and the light was already going.')
+  assert.equal(parsed.boundaries[parsed.boundaries.length - 1]!.measurable, false)
+  assert.ok(parsed.boundaries.slice(0, -1).every((b) => b.measurable))
+})
+
+test('the unmeasurable boundary is never taught to the model', () => {
+  const parsed = parseSentence('The road was long, and the light was already going.')
+  const samples = roundSamples(parsed, alignGaps(parsed, [{ afterWordIndex: 3, ms: 480 }]))
+  // Nine boundaries, not ten. A sentence-ending mark filed against a gap of
+  // zero would teach the writer to close sentences after no pause at all.
+  assert.equal(samples.length, 9)
+  assert.equal(samples.filter((s) => s.mark === 'sentence').length, 0)
+})
+
+test('a full stop inside the reading is still taught', () => {
+  const parsed = parseSentence('The poem resists an easy reading. That resistance is the point.')
+  const samples = roundSamples(parsed, alignGaps(parsed, [{ afterWordIndex: 5, ms: 950 }]))
+  const sentences = samples.filter((s) => s.mark === 'sentence')
+  assert.equal(sentences.length, 1)
+  assert.equal(sentences[0]!.context.ms, 950)
+})
+
+test('the student is not marked wrong for the mark nobody could hear', () => {
+  const parsed = parseSentence('The road was long, and the light was already going.')
+  const result = gradeRound(parsed, alignGaps(parsed, [{ afterWordIndex: 3, ms: 450 }]), DEFAULT_CALIBRATION)
+  assert.equal(result.correct, result.total)
+  assert.equal(result.total, 9)
+  // It still reads as a whole sentence, closing mark and all.
+  assert.equal(result.produced, 'The road was long, and the light was already going.')
+})
+
+test('every sentence in the bank has a mark that can actually be measured', () => {
+  for (const sentence of DRILL_SENTENCES) {
+    const parsed = parseSentence(sentence.text)
+    const teachable = parsed.boundaries.filter((b) => b.measurable && b.mark !== 'none')
+    // d9 is deliberately all negatives — one clause, straight through.
+    if (sentence.id === 'd9') {
+      assert.equal(teachable.length, 0, sentence.id)
+      continue
+    }
+    assert.ok(teachable.length > 0, `${sentence.id} teaches nothing: ${sentence.text}`)
+  }
 })

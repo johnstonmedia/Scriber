@@ -318,16 +318,19 @@ export function Calibrate() {
           Punctuation is stripped while they read it. Left in, the student
           performs the commas they can see, and the writer learns what somebody
           sounds like reading punctuation aloud rather than speaking.
-        */}
-        <p className="calibration-line">
-          {stage === 'marked' && result ? result.expected : parsed?.words.join(' ')}
-        </p>
 
+          Once it is marked this line goes entirely: the report below shows
+          what the writer wrote and what the sentence reads, and a third copy
+          above them is just something else to compare against.
+        */}
         {stage !== 'marked' && (
-          <p className="small muted">
-            Read it as if you were dictating it, not as if you were reading it out. Nothing is
-            recorded — only how long you paused, and the words of this sentence.
-          </p>
+          <>
+            <p className="calibration-line">{parsed?.words.join(' ')}</p>
+            <p className="small muted">
+              Read it as if you were dictating it, not as if you were reading it out. Nothing is
+              recorded — only how long you paused, and the words of this sentence.
+            </p>
+          </>
         )}
 
         {stage === 'ready' && (
@@ -372,6 +375,35 @@ export function Calibrate() {
 }
 
 /**
+ * How the round went, in a sentence.
+ *
+ * Built from a list rather than concatenated conditionally. The first version
+ * glued fragments together with an "and" between two of them and a full stop
+ * on the end, which reads correctly right up until a round is imperfect in a
+ * way neither fragment covers — a comma written where a question mark
+ * belonged is not a mark added and not a mark missed — and then it says
+ * "9 of 10 right. ." and stops.
+ */
+function summarise(result: RoundResult): string {
+  const parts: string[] = []
+  if (result.overWrites > 0) {
+    parts.push(
+      `${result.overWrites} mark${result.overWrites === 1 ? '' : 's'} it added that shouldn't be there`,
+    )
+  }
+  if (result.underWrites > 0) parts.push(`${result.underWrites} it missed`)
+  if (result.wrongMarks > 0) {
+    parts.push(`${result.wrongMarks} where it chose the wrong mark`)
+  }
+
+  const detail =
+    parts.length === 0
+      ? ''
+      : ` ${parts.slice(0, -1).join(', ')}${parts.length > 1 ? ' and ' : ''}${parts[parts.length - 1]}.`
+  return `${result.correct} of ${result.total} right.${detail}`
+}
+
+/**
  * What the writer wrote, against what the sentence says.
  *
  * Both are shown in full even when they are identical — a student who got it
@@ -408,19 +440,7 @@ function RoundReport({
         </div>
       )}
 
-      <p>
-        {perfect
-          ? 'Every mark in the right place.'
-          : `${result.correct} of ${result.total} right. ` +
-            (result.overWrites > 0
-              ? `${result.overWrites} mark${result.overWrites === 1 ? '' : 's'} it added that shouldn't be there`
-              : '') +
-            (result.overWrites > 0 && result.underWrites > 0 ? ', and ' : '') +
-            (result.underWrites > 0
-              ? `${result.underWrites} it missed`
-              : '') +
-            '.'}
-      </p>
+      <p>{perfect ? 'Every mark in the right place.' : summarise(result)}</p>
 
       {mistakes.length > 0 && (
         <table className="table small">

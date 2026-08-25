@@ -36,9 +36,15 @@ export type DrillSentence = {
 }
 
 /**
- * The bank. Weighted towards the cases thresholds alone get wrong: questions,
- * commas before a coordinating conjunction, and the long mid-sentence pause
- * that is not a full stop.
+ * The bank.
+ *
+ * Two rules shaped these. They lean towards what a threshold alone gets wrong
+ * — questions, a comma before a coordinating conjunction, the long
+ * mid-sentence pause that is not a full stop. And every mark worth learning
+ * from has words after it, because a mark at the very end of the reading
+ * cannot be measured at all (see `measurable`). A sentence that ends on the
+ * only interesting mark it has teaches nothing, so those carry a short second
+ * sentence to pause into.
  */
 export const DRILL_SENTENCES: DrillSentence[] = [
   {
@@ -48,7 +54,7 @@ export const DRILL_SENTENCES: DrillSentence[] = [
   },
   {
     id: 'd2',
-    text: 'What had she expected?',
+    text: 'What had she expected? Nothing, in the end.',
     focus: 'A question, which sounds like a full stop and is not one.',
   },
   {
@@ -63,7 +69,7 @@ export const DRILL_SENTENCES: DrillSentence[] = [
   },
   {
     id: 'd5',
-    text: 'How does the composer represent discovery?',
+    text: 'How does the composer represent discovery? The poem never quite says.',
     focus: 'A question opening with "how".',
   },
   {
@@ -78,7 +84,7 @@ export const DRILL_SENTENCES: DrillSentence[] = [
   },
   {
     id: 'd8',
-    text: 'Is memory privileged over experience, or is the text less certain than that?',
+    text: 'Is memory privileged over experience, or is the text less certain? It is hard to say.',
     focus: 'A question long enough to pause inside.',
   },
   {
@@ -103,6 +109,27 @@ export type Boundary = {
   after: string | null
   /** First word of the clause this boundary closes. */
   clauseOpener: string
+  /**
+   * Whether a silence here can be measured at all.
+   *
+   * False for the last boundary in the sentence, and the reason matters. A
+   * silence is measured from the last word before it to the first word after
+   * it — so at the end of a sentence there is no first word after, and the
+   * gap comes back as zero no matter how long the student actually waited.
+   *
+   * Left in, that single boundary would have done real damage: every round
+   * would mark the student wrong for a full stop nobody could hear, and
+   * worse, every round would teach the shared model that a sentence-ending
+   * mark comes after no pause at all. A few hundred rounds of that and the
+   * writer would end sentences mid-clause — the exact complaint this whole
+   * change set out to fix, reintroduced by its own training data.
+   *
+   * It costs nothing to drop. In the exam room the decision to close a
+   * sentence is made when the *next* burst arrives, which does have a gap
+   * either side of it, so what is dropped here is a case inference never
+   * meets.
+   */
+  measurable: boolean
 }
 
 export type ParsedSentence = {
@@ -147,6 +174,7 @@ export function parseSentence(text: string): ParsedSentence {
       before: words[i]!,
       after: words[i + 1] ?? null,
       clauseOpener,
+      measurable: i < words.length - 1,
     })
     // A new clause starts after any mark, not only a terminal one: "however,
     // the second stanza…" opens a clause at "the", and whether that clause
@@ -302,15 +330,20 @@ export function alignGaps(
  * most common fact about English and the model has to be told it.
  */
 export function roundSamples(parsed: ParsedSentence, alignment: Alignment): PunctuationSample[] {
-  return parsed.boundaries.map((boundary, index) => ({
-    context: {
-      ms: alignment.gapAt[index] ?? 0,
-      before: boundary.before,
-      after: boundary.after,
-      clauseOpener: boundary.clauseOpener,
-    },
-    mark: boundary.mark,
-  }))
+  return parsed.boundaries.flatMap((boundary, index) => {
+    if (!boundary.measurable) return []
+    return [
+      {
+        context: {
+          ms: alignment.gapAt[index] ?? 0,
+          before: boundary.before,
+          after: boundary.after,
+          clauseOpener: boundary.clauseOpener,
+        },
+        mark: boundary.mark,
+      },
+    ]
+  })
 }
 
 export type BoundaryVerdict = {
@@ -335,6 +368,13 @@ export type RoundResult = {
   overWrites: number
   /** Marks missed where one belonged. */
   underWrites: number
+  /**
+   * A mark written where a mark belonged, but the wrong one — a comma for a
+   * question mark. Counted separately because it is neither of the others and
+   * was previously counted as neither, which left the report able to say a
+   * round was imperfect without being able to say what was wrong with it.
+   */
+  wrongMarks: number
   spurious: ObservedGap[]
 }
 
@@ -355,8 +395,20 @@ export function gradeRound(
   let correct = 0
   let overWrites = 0
   let underWrites = 0
+  let wrongMarks = 0
 
   parsed.boundaries.forEach((boundary, index) => {
+    produced += boundary.before
+
+    // The closing mark is not something the student can be asked about — see
+    // `measurable`. It is written as the sentence has it, so the comparison
+    // reads as a sentence rather than as one that trails off, and it is not
+    // graded and not taught.
+    if (!boundary.measurable) {
+      produced += MARK_TEXT[boundary.mark]
+      return
+    }
+
     const ms = alignment.gapAt[index] ?? 0
     const prediction = predictMark(
       { ms, before: boundary.before, after: boundary.after, clauseOpener: boundary.clauseOpener },
@@ -367,6 +419,7 @@ export function gradeRound(
     if (hit) correct++
     else if (boundary.mark === 'none') overWrites++
     else if (prediction.mark === 'none') underWrites++
+    else wrongMarks++
 
     verdicts.push({
       before: boundary.before,
@@ -378,7 +431,6 @@ export function gradeRound(
       correct: hit,
     })
 
-    produced += boundary.before
     produced += MARK_TEXT[prediction.mark]
     if (boundary.after) produced += prediction.mark === 'paragraph' ? '' : ' '
   })
@@ -388,9 +440,10 @@ export function gradeRound(
     produced: produced.trim(),
     expected: renderExpected(parsed),
     correct,
-    total: parsed.boundaries.length,
+    total: parsed.boundaries.filter((boundary) => boundary.measurable).length,
     overWrites,
     underWrites,
+    wrongMarks,
     spurious: alignment.spurious,
   }
 }

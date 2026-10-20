@@ -99,21 +99,43 @@ const sheet = () =>
     return (copy.innerText ?? '').trim()
   })
 
-/** Say something, and wait for the writer to finish taking it down. */
+/**
+ * Say something, and wait until the writer has genuinely finished with it.
+ *
+ * Waiting for the writer's queue to read empty is not enough on its own, and
+ * getting that wrong produced a failure that looked exactly like a bug in
+ * backspace. The queue is React state: for a few milliseconds after the words
+ * are heard the bar still reads zero because nothing has re-rendered yet, so
+ * a check that only waits for "empty" can be satisfied before the words have
+ * even been queued — and the backspace that follows then lands on the last
+ * word of the *previous* run, which is correct behaviour reached through a
+ * race in the test.
+ *
+ * So this waits for the page itself to stop changing, which is the thing the
+ * assertions are about.
+ */
 async function say(text) {
   await page.evaluate((said) => {
     window.__fakeRecognition.emit(said, false)
     window.__fakeRecognition.emit(said, true)
   }, text)
-  await page.waitForFunction(
-    () => {
+
+  let previous = null
+  let stable = 0
+  const deadline = Date.now() + 30000
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(250)
+    const drained = await page.evaluate(() => {
       const fill = document.querySelector('.load-bar-fill')
       return !fill || parseFloat(fill.style.width || '0') === 0
-    },
-    null,
-    { timeout: 30000 },
-  )
-  await page.waitForTimeout(500)
+    })
+    const now = await sheet()
+    // Two readings the same, with nothing left in the writer's head.
+    stable = drained && now === previous ? stable + 1 : 0
+    previous = now
+    if (stable >= 3) return
+  }
+  throw new Error(`the writer never settled after "${text}"`)
 }
 
 const micOn = () => page.getByRole('button', { name: 'Start dictating' }).click()

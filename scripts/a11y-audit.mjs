@@ -35,7 +35,26 @@ const db = getAdminFirestore(adminApp)
 const adminAuth = getAdminAuth(adminApp)
 
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' })
-const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+/*
+ * Reduced motion, for two reasons that happen to agree.
+ *
+ * The homepage tokens fade in and out on a loop, and axe measures contrast
+ * against whatever opacity the element has at the instant it looks. Sample
+ * one mid-fade and it reports a contrast failure that exists for a few
+ * hundred milliseconds of a five-second cycle and is not what WCAG means —
+ * so the audit failed about one run in four, on nothing. A test that fails
+ * at random is worse than one that fails, because the habit it teaches is
+ * to run it again.
+ *
+ * And the state this pins is the one that matters anyway: with animations
+ * off, every element sits at its settled colour, which is what a reader
+ * actually has to read. The stylesheet already has the reduced-motion rules
+ * to put them there.
+ */
+const context = await browser.newContext({
+  viewport: { width: 1440, height: 900 },
+  reducedMotion: 'reduce',
+})
 const page = await context.newPage()
 page.on('pageerror', (e) => console.log('PAGEERROR:', e.message))
 

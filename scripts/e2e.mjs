@@ -53,21 +53,6 @@ await page.waitForSelector('text=Before you start')
 await page.getByRole('button', { name: 'Skip to working time' }).click()
 await page.waitForSelector('.mic-dock')
 
-/*
- * Bursts a writer can actually hold. The third one used to run to nineteen
- * units against a memory of eighteen, so the writer lost its "full stop" and
- * asked for the tail again — correct behaviour, and invisible, because nothing
- * here checked what was written. Split at the comma, which is where somebody
- * dictating would draw breath anyway.
- */
-/**
- * Wait for the writer to catch up.
- *
- * The writer takes words down at a person's pace, so firing bursts a tenth
- * of a second apart overflows their memory and most of it is genuinely lost
- * — which is the simulation working, and which is why this used to print a
- * single word and assert nothing about it.
- */
 /** What the writer has written — not the placeholder, nor the live text. */
 const sheet = () =>
   page.evaluate(() => {
@@ -78,19 +63,35 @@ const sheet = () =>
     return (copy.innerText ?? '').trim()
   })
 
+/**
+ * Wait for the writer to catch up.
+ *
+ * The writer takes words down at a person's pace, so firing bursts a tenth of
+ * a second apart overflows their memory and most of it is genuinely lost —
+ * which is the simulation working, and which is why this used to print a
+ * single word and assert nothing about it.
+ *
+ * It waits for the page to stop changing rather than for the writer's queue
+ * to read empty. The queue is React state, and for a moment after words are
+ * heard it still reads empty because nothing has re-rendered yet — so waiting
+ * on that alone can return before the burst has even been queued.
+ */
 async function writerCaughtUp() {
-  await page.waitForFunction(
-    () => {
+  let previous = null
+  let stable = 0
+  const deadline = Date.now() + 30000
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(250)
+    const drained = await page.evaluate(() => {
       const fill = document.querySelector('.load-bar-fill')
-      if (!fill) return true
-      return parseFloat(fill.style.width || '0') === 0
-    },
-    null,
-    { timeout: 30000 },
-  )
-  // The queue being empty and the last unit being on the page are one drain
-  // tick apart.
-  await page.waitForTimeout(400)
+      return !fill || parseFloat(fill.style.width || '0') === 0
+    })
+    const now = await sheet()
+    stable = drained && now === previous ? stable + 1 : 0
+    previous = now
+    if (stable >= 3) return
+  }
+  throw new Error('the writer never settled')
 }
 
 /*

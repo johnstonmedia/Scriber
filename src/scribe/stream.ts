@@ -108,6 +108,20 @@ export function absorbFinal(
   return { state: { taken: [], revisions: result.state.revisions }, units: result.units }
 }
 
+/**
+ * How many words of this segment have already gone to the writer.
+ *
+ * The caller needs it to know *where* each released unit sits in the
+ * transcript, because a silence is measured at the moment the recogniser
+ * delivers words and those words reach the writer a beat later — three words
+ * later, by the lookahead. Attaching the silence to whatever happened to be
+ * released at that moment would put the comma three words before the place
+ * the student paused.
+ */
+export function wordsTaken(state: StreamState): number {
+  return state.taken.reduce((sum, unit) => sum + unit.split(' ').length, 0)
+}
+
 /** A segment ended without a final — abandon what was in flight. */
 export function resetSegment(state: StreamState): StreamState {
   return { ...state, taken: [] }

@@ -19,6 +19,7 @@
  */
 
 import type { Calibration } from './calibration'
+import { silencesOf, type Delivery } from './cadence'
 import {
   MARK_TEXT,
   predictMark,
@@ -213,17 +214,37 @@ export type ObservedGap = {
  */
 export type RecogniserUpdate = { words: number; at: number }
 
-/** Silences, read off the intervals between recogniser updates. */
+/**
+ * Silences, read off the intervals between recogniser updates.
+ *
+ * The interval is not the silence: it also contains the time spent saying the
+ * words that arrived, which is usually most of it. scribe/cadence.ts takes
+ * that out, estimating how long this student takes over a word from the
+ * reading itself — the same arithmetic the exam room uses, which is what
+ * keeps what the model is taught and what it is later asked about measured
+ * the same way.
+ */
 export function observedGaps(updates: RecogniserUpdate[]): ObservedGap[] {
-  const gaps: ObservedGap[] = []
+  const placed: { afterWordIndex: number; delivery: Delivery }[] = []
   for (let i = 1; i < updates.length; i++) {
     const previous = updates[i - 1]!
     const current = updates[i]!
     // An update that added no words says nothing about where a silence fell.
     if (current.words <= previous.words) continue
-    gaps.push({ afterWordIndex: previous.words - 1, ms: Math.max(0, current.at - previous.at) })
+    placed.push({
+      afterWordIndex: previous.words - 1,
+      delivery: {
+        words: current.words - previous.words,
+        intervalMs: Math.max(0, current.at - previous.at),
+      },
+    })
   }
-  return gaps
+
+  const silences = silencesOf(placed.map((entry) => entry.delivery))
+  return placed.map((entry, index) => ({
+    afterWordIndex: entry.afterWordIndex,
+    ms: silences[index] ?? 0,
+  }))
 }
 
 /**

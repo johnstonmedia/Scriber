@@ -196,8 +196,15 @@ export function hear(
   now: number,
   burst = now,
   options: {
-    /** The silence before this group of words. */
-    gapMs?: number
+    /**
+     * The silence before each unit, index-aligned with `units`. A unit the
+     * student ran straight into carries zero, which is most of them.
+     *
+     * Per unit rather than per group because the recogniser hands over
+     * several words at once and a pause can fall inside that handful — the
+     * group is an artefact of how speech arrives, not of how it was spoken.
+     */
+    gaps?: number[]
     /**
      * Whether this group finishes its burst. False while a burst is still
      * arriving in pieces — speech reaches the writer as it is spoken rather
@@ -218,7 +225,7 @@ export function hear(
         heardAt: now,
         burst,
         lastOfBurst: closesBurst && index === units.length - 1,
-        gapMs: index === 0 ? Math.max(0, options.gapMs ?? 0) : 0,
+        gapMs: Math.max(0, options.gaps?.[index] ?? 0),
       })),
     ],
     stats: { ...memory.stats },

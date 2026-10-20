@@ -42,8 +42,9 @@ import {
   type ScribeEvent,
   type ScribeState,
 } from '../scribe/engine'
-import { absorbFinal, absorbInterim, createStream, resetSegment } from '../scribe/stream'
+import { absorbFinal, absorbInterim, createStream, resetSegment, wordsTaken } from '../scribe/stream'
 import { EMPTY_MODEL, type PunctuationModel } from '../scribe/punctuation'
+import { createCadence, observeDelivery } from '../scribe/cadence'
 import { loadPunctuationModel } from '../lib/punctuationModel'
 import {
   answerSpelling,
@@ -211,13 +212,29 @@ export function ExamRoom() {
    */
   const streamRef = useRef(createStream())
   /**
-   * When the last words reached the writer. The silence since is what the
-   * punctuation model reads, and it is measured here — at the microphone —
-   * rather than where the words are written, because the writer is
-   * deliberately a beat behind and a pause measured there would be a
-   * measurement of the queue rather than of the student.
+   * When the last words reached the writer. The gap since is measured here —
+   * at the microphone — rather than where the words are written, because the
+   * writer is deliberately a beat behind and a pause measured there would be
+   * a measurement of the queue rather than of the student.
    */
   const lastHeardAt = useRef<number | null>(null)
+  /**
+   * How long this student takes over a word, learned as they speak.
+   *
+   * The interval between two deliveries from the recogniser is mostly the
+   * time spent saying the words in the second one, not silence — see
+   * scribe/cadence.ts. Without this the writer reads four words arriving
+   * together as a full stop.
+   */
+  const cadenceRef = useRef(createCadence())
+  /**
+   * Silences, keyed by the index of the word they came before, within the
+   * recognition segment in progress. Emptied as units collect them, and
+   * cleared with the segment.
+   */
+  const silenceBefore = useRef(new Map<number, number>())
+  /** Words the recogniser has delivered in this segment. */
+  const wordsSeen = useRef(0)
   /** The pooled punctuation model, fetched once. */
   const modelRef = useRef<PunctuationModel>(EMPTY_MODEL)
 
@@ -571,18 +588,61 @@ export function ExamRoom() {
     [testId],
   )
 
-  /** Hand a group of settled units to the writer, with the silence before them. */
-  const offer = useCallback(
-    (units: string[], burst: number, lastOfBurst: boolean) => {
-      if (units.length === 0) return
-      const now = Date.now()
-      // Time since the last words arrived. On the very first group there is no
-      // "since" — a student thinking before they begin is not a pause inside a
-      // sentence that does not yet exist.
-      const gapMs = lastHeardAt.current === null ? 0 : now - lastHeardAt.current
-      lastHeardAt.current = now
+  /**
+   * Note what the recogniser has just delivered, and where any silence fell.
+   *
+   * Called for every update, whether or not it produced words the writer can
+   * have yet — which is the whole point. The stream holds the last three
+   * words back for the recogniser to revise, so measuring at the moment units
+   * are *released* would miss the deliveries that released nothing and count
+   * their speaking time as silence. The silence is recorded against the word
+   * it preceded, and collected later by whichever unit starts at that word.
+   */
+  const noteDelivery = useCallback((totalWords: number) => {
+    const now = Date.now()
+    const previous = wordsSeen.current
+    if (totalWords <= previous) return
+    wordsSeen.current = totalWords
 
-      const result = hear(memoryRef.current, units, now, burst, { gapMs, lastOfBurst })
+    if (lastHeardAt.current !== null) {
+      const observed = observeDelivery(cadenceRef.current, {
+        words: totalWords - previous,
+        intervalMs: now - lastHeardAt.current,
+      })
+      cadenceRef.current = observed.cadence
+      // A measurement hook, and the one place in this file that writes to a
+      // global. It pushes nothing unless a harness has put the array there
+      // first, so it costs a property read in an exam and exists because
+      // this calculation was wrong in a shipped release and there was no way
+      // to see it from outside. scripts/steady-speech-probe.mjs reads it.
+      ;(window as unknown as { __scriberTiming?: unknown[] }).__scriberTiming?.push({
+        words: totalWords - previous,
+        interval: now - lastHeardAt.current,
+        perWord: Math.round(cadenceRef.current.perWordMs),
+        silence: Math.round(observed.silenceMs),
+      })
+      if (observed.silenceMs > 0) {
+        // The silence sits before the first word this delivery brought.
+        silenceBefore.current.set(previous, observed.silenceMs)
+      }
+    }
+    lastHeardAt.current = now
+  }, [])
+
+  /** Hand settled units to the writer, each with the silence that preceded it. */
+  const offer = useCallback(
+    (units: string[], startWord: number, burst: number, lastOfBurst: boolean) => {
+      if (units.length === 0) return
+
+      let cursor = startWord
+      const gaps = units.map((unit) => {
+        const gap = silenceBefore.current.get(cursor) ?? 0
+        silenceBefore.current.delete(cursor)
+        cursor += unit.split(' ').length
+        return gap
+      })
+
+      const result = hear(memoryRef.current, units, Date.now(), burst, { gaps, lastOfBurst })
       memoryRef.current = result.memory
       setMemory(result.memory)
       handleMemoryEvents(result.events)
@@ -607,6 +667,8 @@ export function ExamRoom() {
       if (source === 'typed') lastHeardAt.current = null
       if (notWriting()) {
         streamRef.current = resetSegment(streamRef.current)
+        silenceBefore.current.clear()
+        wordsSeen.current = 0
         return
       }
 
@@ -614,14 +676,21 @@ export function ExamRoom() {
       // the answer to it, not more of your essay.
       if (memoryRef.current.spellCheck) {
         streamRef.current = resetSegment(streamRef.current)
+        silenceBefore.current.clear()
+        wordsSeen.current = 0
         spellingAnswerRef.current(heard)
         return
       }
 
       const burst = burstRef.current || ++burstRef.current
+      noteDelivery(heard.split(/\s+/).filter(Boolean).length)
+      const startWord = wordsTaken(streamRef.current)
       const result = absorbFinal(streamRef.current, heard, effectiveRuleProfile)
       streamRef.current = result.state
-      offer(result.units, burst, true)
+      offer(result.units, startWord, burst, true)
+      // The segment is over; word indices start again from nothing.
+      silenceBefore.current.clear()
+      wordsSeen.current = 0
       // The next words the recogniser hears begin a new burst, so a later
       // "scratch that" rubs out that one rather than reaching back into this.
       burstRef.current++
@@ -631,7 +700,7 @@ export function ExamRoom() {
         { at: Date.now() - startedAt.current, heard, commands: [] },
       ]
     },
-    [effectiveRuleProfile, notWriting, offer],
+    [effectiveRuleProfile, notWriting, offer, noteDelivery],
   )
 
   /**
@@ -829,9 +898,12 @@ export function ExamRoom() {
 
       if (!notWriting() && !memoryRef.current.spellCheck) {
         const burst = burstRef.current || ++burstRef.current
+        // Timed on every update, released only when settled — see noteDelivery.
+        noteDelivery(text.trim().split(/\s+/).filter(Boolean).length)
+        const startWord = wordsTaken(streamRef.current)
         const absorbed = absorbInterim(streamRef.current, text, effectiveRuleProfile)
         streamRef.current = absorbed.state
-        offer(absorbed.units, burst, false)
+        offer(absorbed.units, startWord, burst, false)
       }
 
       if (state.timer !== null) return
@@ -840,7 +912,7 @@ export function ExamRoom() {
         setInterim(state.latest)
       }, 80)
     },
-    [effectiveRuleProfile, notWriting, offer],
+    [effectiveRuleProfile, notWriting, offer, noteDelivery],
   )
 
   useEffect(() => {

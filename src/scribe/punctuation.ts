@@ -63,8 +63,16 @@ export const MARK_LABEL: Record<Mark, string> = {
  * scheme describe a different model and must not be folded into a newer one —
  * they are discarded rather than migrated, because a guess at what an old
  * bucket would have been is indistinguishable from data and much worse.
+ *
+ * Version 2: the duration feature changed meaning. Up to version 1 it carried
+ * the whole interval between two deliveries from the speech recogniser, which
+ * is mostly the time spent saying the words and only incidentally a pause —
+ * so the buckets were measuring speech rate as much as silence. It now
+ * carries the silence with the speaking time taken out (see scribe/cadence).
+ * Everything learned under the old meaning is wrong under the new one, and
+ * discarding it is the point of this number existing.
  */
-export const MODEL_VERSION = 1
+export const MODEL_VERSION = 2
 
 // --------------------------------------------------------------- the features
 

@@ -164,16 +164,48 @@ test('once the bank is exhausted it starts over rather than returning nothing', 
 
 // --------------------------------------------------- reading the recogniser
 
-test('silences are read off the intervals between recogniser updates', () => {
+test('a silence is placed after the last word that had arrived before it', () => {
   const gaps = observedGaps([
     { words: 2, at: 1000 },
     { words: 4, at: 1300 },
     { words: 5, at: 1900 },
   ])
-  assert.deepEqual(gaps, [
-    { afterWordIndex: 1, ms: 300 },
-    { afterWordIndex: 3, ms: 600 },
+  assert.deepEqual(
+    gaps.map((gap) => gap.afterWordIndex),
+    [1, 3],
+  )
+})
+
+test('the time spent saying the words is not counted as silence', () => {
+  // Two words in 300ms is fluent speech, not a pause. One word 600ms after
+  // the last is half a second of waiting.
+  const gaps = observedGaps([
+    { words: 2, at: 1000 },
+    { words: 4, at: 1300 },
+    { words: 5, at: 1900 },
   ])
+  assert.equal(gaps[0]!.ms, 0)
+  assert.ok(gaps[1]!.ms > 200, String(gaps[1]!.ms))
+})
+
+test('a whole reading at a steady pace yields no silences at all', () => {
+  // Words arriving in lumps of one to four, 300ms each, with no pause
+  // anywhere. Every one of these used to read as a gap the length of the
+  // lump, and a lump of three read as the end of a sentence.
+  const updates = []
+  let words = 0
+  let at = 0
+  for (const lump of [1, 2, 3, 4, 1, 2, 3, 4, 1, 2]) {
+    updates.push({ words, at })
+    words += lump
+    at += lump * 300
+  }
+  updates.push({ words, at })
+  const gaps = observedGaps(updates)
+  assert.ok(
+    gaps.every((gap) => gap.ms === 0),
+    `invented silence: ${gaps.map((g) => g.ms).join(', ')}`,
+  )
 })
 
 test('an update that added no words says nothing about a silence', () => {
@@ -182,7 +214,8 @@ test('an update that added no words says nothing about a silence', () => {
     { words: 3, at: 1400 },
     { words: 5, at: 1500 },
   ])
-  assert.deepEqual(gaps, [{ afterWordIndex: 2, ms: 100 }])
+  assert.equal(gaps.length, 1)
+  assert.equal(gaps[0]!.afterWordIndex, 2)
 })
 
 test('a reading of the right sentence is accepted', () => {

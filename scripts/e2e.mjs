@@ -60,31 +60,30 @@ await page.waitForSelector('.mic-dock')
  * here checked what was written. Split at the comma, which is where somebody
  * dictating would draw breath anyway.
  */
-const bursts = [
-  'capital the composer represents discovery as an unsettling process comma not a triumphant one full stop',
-  'new paragraph',
-  'capital this is developed through the motif of the open sea comma',
-  'which recurs at each turning point full stop',
-  'the responder is positioned to question their own assumptions',
-  'scratch that',
-  'capital ultimately comma discovery is shown to be irreversible full stop',
-]
 /**
  * Wait for the writer to catch up.
  *
- * The writer takes words down at a person's pace, so firing six bursts a
- * tenth of a second apart overflows their memory and most of it is genuinely
- * lost — which is the simulation working, and which is why this used to print
- * a single word and assert nothing about it. Dictating at a pace a writer can
- * follow is what the exercise is for, so the test does that too.
+ * The writer takes words down at a person's pace, so firing bursts a tenth
+ * of a second apart overflows their memory and most of it is genuinely lost
+ * — which is the simulation working, and which is why this used to print a
+ * single word and assert nothing about it.
  */
+/** What the writer has written — not the placeholder, nor the live text. */
+const sheet = () =>
+  page.evaluate(() => {
+    const node = document.querySelector('.answer-sheet')
+    if (!node) return ''
+    const copy = node.cloneNode(true)
+    copy.querySelectorAll('.answer-placeholder, .interim, .awaiting-spelling').forEach((n) => n.remove())
+    return (copy.innerText ?? '').trim()
+  })
+
 async function writerCaughtUp() {
   await page.waitForFunction(
     () => {
       const fill = document.querySelector('.load-bar-fill')
       if (!fill) return true
-      const width = parseFloat(fill.style.width || '0')
-      return width === 0
+      return parseFloat(fill.style.width || '0') === 0
     },
     null,
     { timeout: 30000 },
@@ -93,6 +92,20 @@ async function writerCaughtUp() {
   // tick apart.
   await page.waitForTimeout(400)
 }
+
+/*
+ * Bursts a writer can actually hold. The third one used to run to nineteen
+ * units against a memory of eighteen, so the writer lost its "full stop" and
+ * asked for the tail again — correct behaviour, and invisible, because
+ * nothing here checked what was written. Split at the comma, which is where
+ * somebody dictating would draw breath anyway.
+ */
+const bursts = [
+  'capital the composer represents discovery as an unsettling process comma not a triumphant one full stop',
+  'new paragraph',
+  'capital this is developed through the motif of the open sea comma',
+  'which recurs at each turning point full stop',
+]
 
 for (const burst of bursts) {
   await page.getByLabel('Type your dictation').fill(burst)
@@ -106,21 +119,68 @@ for (const burst of bursts) {
     await writerCaughtUp()
   }
 }
-const written = await page.locator('.answer-sheet').innerText()
+
+const dictated = await sheet()
+const expectedDictated =
+  'The composer represents discovery as an unsettling process, not a triumphant one.\n\n' +
+  'This is developed through the motif of the open sea, which recurs at each turning point.'
+if (dictated === expectedDictated) {
+  console.log('✓ dictated commands wrote exactly the intended text')
+} else {
+  console.log('✗ the answer sheet does not match what was dictated')
+  console.log('  expected:', JSON.stringify(expectedDictated))
+  console.log('  actual:  ', JSON.stringify(dictated))
+  process.exitCode = 1
+}
+
+/*
+ * "Scratch that" clears everything dictated since the student last pressed
+ * Start dictating. Nobody has pressed it here — this is the typed fallback,
+ * for a browser with no speech recognition — so the run is the whole session
+ * and the command takes all of it. That is the intended reading of "since you
+ * started", and it is why the command offers the words back afterwards.
+ *
+ * The spoken path, where a run really does begin at the microphone, has its
+ * own coverage in scripts/corrections-e2e.mjs.
+ */
+await page.getByLabel('Type your dictation').fill('scratch that')
+await page.getByRole('button', { name: 'Write' }).click()
+await writerCaughtUp()
+
+const scratched = await sheet()
+const offered = await page
+  .getByRole('button', { name: 'Put it back' })
+  .isVisible()
+  .catch(() => false)
+if (scratched === '' && offered) {
+  console.log('✓ "scratch that" cleared the run, and offered it back')
+} else {
+  console.log('✗ "scratch that" did not behave as expected')
+  console.log('  left on the page:', JSON.stringify(scratched))
+  console.log('  offered it back: ', offered)
+  process.exitCode = 1
+}
+
+await page.getByRole('button', { name: 'Put it back' }).click()
+await page.waitForTimeout(400)
+
+await page.getByLabel('Type your dictation').fill('capital ultimately comma discovery is shown to be irreversible full stop')
+await page.getByRole('button', { name: 'Write' }).click()
+await writerCaughtUp()
+
+const written = await sheet()
 console.log('--- ANSWER SHEET ---\n' + written + '\n--------------------')
 
-const expected =
-  'The composer represents discovery as an unsettling process, not a triumphant one.\n\n' +
-  'This is developed through the motif of the open sea, which recurs at each turning point. ' +
-  'Ultimately, discovery is shown to be irreversible.'
+const expected = `${expectedDictated} Ultimately, discovery is shown to be irreversible.`
 if (written.trim() === expected) {
-  console.log('✓ dictated commands wrote exactly the intended text, and "scratch that" took a burst back')
+  console.log('✓ the restored text carried on being dictated into')
 } else {
   console.log('✗ the answer sheet does not match what was dictated')
   console.log('  expected:', JSON.stringify(expected))
   console.log('  actual:  ', JSON.stringify(written.trim()))
   process.exitCode = 1
 }
+
 await shot(page, '03-exam')
 
 await page.getByRole('button', { name: 'Finish' }).click()

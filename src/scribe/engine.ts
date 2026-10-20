@@ -67,6 +67,21 @@ export type ScribeState = {
   pendingCase: 'none' | 'capital' | 'allCaps'
   capsLock: boolean
   stats: ScribeStats
+  /**
+   * The id of the first atom written since the student last started
+   * dictating. "Scratch that" rubs out everything from here on.
+   *
+   * Scoped to the microphone rather than to the last thing said, because
+   * that is what a student means by it: they have stopped, realised the run
+   * came out wrong, and want it gone. Taking back only the last burst leaves
+   * them saying "scratch that" over and over at a writer that keeps
+   * uncovering more of the mistake.
+   *
+   * It is also, for the same reason, the most destructive command here — in
+   * a long exam with the microphone left on it reaches a whole answer — so
+   * every caller is expected to offer a way back. See `undoScratch`.
+   */
+  dictationFrom: number
 }
 
 export function createState(): ScribeState {
@@ -76,6 +91,7 @@ export function createState(): ScribeState {
     utterance: 0,
     pendingCase: 'none',
     capsLock: false,
+    dictationFrom: 1,
     stats: {
       words: 0,
       commandCounts: {},
@@ -87,6 +103,24 @@ export function createState(): ScribeState {
       assistedInsertions: 0,
     },
   }
+}
+
+/**
+ * The student has started dictating. Anything written from now on belongs to
+ * this run, and "scratch that" takes back exactly this much.
+ */
+export function startDictationRun(state: ScribeState): ScribeState {
+  return { ...state, dictationFrom: state.nextId }
+}
+
+/**
+ * How much "scratch that" would take back right now.
+ *
+ * Offered so the interface can say "that will remove 240 words" rather than
+ * removing them and hoping.
+ */
+export function scratchScope(state: ScribeState): number {
+  return state.atoms.filter((atom) => atom.id >= state.dictationFrom && atom.kind === 'word').length
 }
 
 const phraseIndex: PhraseIndex = buildPhraseIndex()
@@ -440,11 +474,10 @@ function applyEdit(state: ScribeState, action: 'scratchThat' | 'deleteWord' | 'd
   }
 
   if (action === 'scratchThat') {
-    // Everything said in this burst, or if this burst is only the command
-    // itself, everything from the burst before it.
-    const thisBurst = state.atoms.filter((a) => a.utterance === state.utterance)
-    const target = thisBurst.length > 0 ? state.utterance : state.utterance - 1
-    state.atoms = state.atoms.filter((a) => a.utterance !== target)
+    // Everything since the student last started dictating — see
+    // `dictationFrom`. Atom ids only ever go up, so this is every atom
+    // written during this run and nothing written before it.
+    state.atoms = state.atoms.filter((atom) => atom.id < state.dictationFrom)
   }
 
   if (action === 'deleteSentence') {

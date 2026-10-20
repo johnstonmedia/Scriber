@@ -244,13 +244,16 @@ export const COMMANDS: CommandEntry[] = [
     phrases: ['scratch that', 'delete that', 'strike that'],
     command: { kind: 'edit', action: 'scratchThat' },
     group: 'Corrections',
-    example: 'Removes everything you said in your last burst of dictation.',
+    example:
+      'Removes everything you have dictated since you last pressed Start dictating. ' +
+      'For a single word, press Backspace or say "delete last word".',
   },
   {
     label: 'Delete last word',
     phrases: ['delete last word', 'delete word', 'rub out last word'],
     command: { kind: 'edit', action: 'deleteWord' },
     group: 'Corrections',
+    example: 'Backspace does the same thing, without saying it out loud.',
   },
   {
     label: 'Delete last sentence',

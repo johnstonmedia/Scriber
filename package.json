@@ -26,7 +26,8 @@
     "capture:exam": "node scripts/capture-exam-screens.mjs",
     "test:punctuation": "node scripts/punctuation-e2e.mjs",
     "test:latency": "node scripts/write-latency-e2e.mjs",
-    "test:steady": "node scripts/steady-speech-probe.mjs"
+    "test:steady": "node scripts/steady-speech-probe.mjs",
+    "test:corrections": "node scripts/corrections-e2e.mjs"
   },
   "dependencies": {
     "firebase": "^12.17.1",

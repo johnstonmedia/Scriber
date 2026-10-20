@@ -39,6 +39,7 @@ import {
   createState,
   lastSentences,
   render,
+  startDictationRun,
   type ScribeEvent,
   type ScribeState,
 } from '../scribe/engine'
@@ -197,6 +198,17 @@ export function ExamRoom() {
   // The writer's working memory — the lag, the backlog and the spelling checks.
   const [memory, setMemory] = useState<MemoryState>(() => createMemory(settings.memory))
   const [repeatAsk, setRepeatAsk] = useState<{ lost: number; resumeFrom: string } | null>(null)
+  /**
+   * The page as it was immediately before "scratch that".
+   *
+   * The command now clears everything said since the microphone was started,
+   * which is what a student means by it — but in a long exam with the
+   * microphone left running that can be most of an answer, and a student who
+   * said it by accident, or whose recogniser mis-heard something else as it,
+   * would have no way back. So the previous page is kept until they write
+   * again.
+   */
+  const [undoScratch, setUndoScratch] = useState<{ state: ScribeState; words: number } | null>(null)
   const [spelling, setSpelling] = useState('')
   const memoryRef = useRef(memory)
   memoryRef.current = memory
@@ -517,6 +529,7 @@ export function ExamRoom() {
     (units: PendingUnit[], options?: { forceClose?: boolean }) => {
       if (units.length === 0) return
       let state = scribeRef.current
+      const before = state
       const events: ScribeEvent[] = []
       const assisted = effectiveRuleProfile === 'assisted'
 
@@ -548,6 +561,18 @@ export function ExamRoom() {
       scribeRef.current = state
       setScribe(state)
       handleEvents(events, state)
+
+      const scratched = events.some(
+        (event) => event.type === 'command' && event.label === 'Scratch that',
+      )
+      if (scratched) {
+        const lost = before.stats.words - state.stats.words
+        setUndoScratch(lost > 0 ? { state: before, words: lost } : null)
+      } else if (state.stats.words > before.stats.words) {
+        // They have carried on writing, so the offer has been declined by
+        // the only answer that matters.
+        setUndoScratch(null)
+      }
     },
     [effectiveRuleProfile, handleEvents, settings.calibration],
   )
@@ -704,13 +729,14 @@ export function ExamRoom() {
   )
 
   /**
-   * Backspace, the one key that does anything in a live test.
+   * Backspace: take back the last word.
    *
-   * Typing is gone entirely — a scribe writes what is said, not what is
-   * typed — but a student still needs a way to take a word back without
-   * saying "scratch that" out loud in a silent exam room. It runs the same
-   * command the spoken one does, so there is one implementation and one set
-   * of tests behind both.
+   * A student needs a way to correct a word without saying "scratch that"
+   * out loud — in a silent exam room because everyone would hear, and on
+   * their own because the spoken command now clears the whole run and a
+   * single wrong word does not deserve that. It runs the same command the
+   * spoken one does, so there is one implementation and one set of tests
+   * behind both.
    *
    * Unlike dictation it does not go through the writer's working memory: a
    * correction the student made with their own hand should land at once,
@@ -729,12 +755,15 @@ export function ExamRoom() {
     handleEvents(result.events, result.state)
   }, [effectiveRuleProfile, handleEvents])
 
+  // In a live test and in practice alike. It was a live-test-only key, which
+  // left somebody practising on their own with no way to take back a single
+  // word at all — they had to say "scratch that" and lose the run.
   useEffect(() => {
-    if (!isLiveTest) return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Backspace') return
-      // The spelling box is a real field and backspace has to work in it
-      // normally — this only claims the key when nothing has focus.
+      // The spelling box and the typed-dictation box are real fields and
+      // backspace has to work in them normally — this only claims the key
+      // when nothing has focus.
       const target = event.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return
@@ -744,12 +773,13 @@ export function ExamRoom() {
       // mid-exam would be its own disaster.
       event.preventDefault()
       if (phaseRef.current !== 'working' || paused || markedAbsent) return
+      if (scribeRef.current.stats.words === 0) return
       deleteLastWord()
       toast('Deleted last word')
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isLiveTest, paused, markedAbsent, deleteLastWord, toast])
+  }, [paused, markedAbsent, deleteLastWord, toast])
 
   // A test hook for driving the writer's long timers without waiting them out.
   useEffect(() => {
@@ -1022,6 +1052,12 @@ export function ExamRoom() {
       dictation.current.stop()
     } else {
       setNotice(null)
+      // Everything from here on belongs to this run, and is what "scratch
+      // that" will take back.
+      const next = startDictationRun(scribeRef.current)
+      scribeRef.current = next
+      setScribe(next)
+      setUndoScratch(null)
       dictation.current.start()
     }
   }
@@ -1433,6 +1469,31 @@ export function ExamRoom() {
             <span className="grow">{notice}</span>
             <button className="btn btn-sm btn-ghost" onClick={() => setNotice(null)}>
               Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {undoScratch && (
+        <div className="alert alert-warn no-print" style={{ borderRadius: 0 }}>
+          <div className="row gap-3">
+            <span className="grow">
+              Scratched {undoScratch.words} word{undoScratch.words === 1 ? '' : 's'} — everything
+              since you started dictating.
+            </span>
+            <button
+              className="btn btn-sm"
+              onClick={() => {
+                scribeRef.current = undoScratch.state
+                setScribe(undoScratch.state)
+                setUndoScratch(null)
+                toast('Put back')
+              }}
+            >
+              Put it back
+            </button>
+            <button className="btn btn-sm btn-ghost" onClick={() => setUndoScratch(null)}>
+              Keep it scratched
             </button>
           </div>
         </div>

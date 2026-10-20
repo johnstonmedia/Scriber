@@ -53,6 +53,8 @@ export function SessionReview() {
         utterance: 0,
         pendingCase: 'none',
         capsLock: false,
+        // A finished session is being read back, not dictated into.
+        dictationFrom: 0,
         stats: {
           words: 0,
           commandCounts: {},

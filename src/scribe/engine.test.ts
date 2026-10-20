@@ -7,6 +7,8 @@ import {
   lastSentences,
   normaliseUtterance,
   render,
+  scratchScope,
+  startDictationRun,
   type RuleProfile,
   type ScribeState,
 } from './engine.js'
@@ -14,10 +16,14 @@ import { DEFAULT_CALIBRATION } from './calibration.js'
 import { EMPTY_MODEL, train, type PunctuationModel } from './punctuation.js'
 
 /** Dictate a series of spoken bursts and return the finished state. */
-function dictate(bursts: string[], profile: RuleProfile = 'strict'): ScribeState {
+function dictate(
+  bursts: string[],
+  profile: RuleProfile = 'strict',
+  from: ScribeState = createState(),
+): ScribeState {
   return bursts.reduce<ScribeState>(
     (state, burst) => applyUtterance(state, burst, profile).state,
-    createState(),
+    from,
   )
 }
 
@@ -109,12 +115,43 @@ test('punctuation sits correctly against neighbouring words', () => {
   )
 })
 
-test('scratch that removes the previous burst of dictation', () => {
-  assert.equal(written(['keep this full stop', 'remove all of this', 'scratch that']), 'keep this.')
+test('scratch that clears everything said since dictating started', () => {
+  // Not just the last burst. A student who stops and says "scratch that"
+  // means the run they have just finished, not the final few words of it.
+  let state = dictate(['keep this full stop'])
+  state = startDictationRun(state)
+  state = dictate(['remove all of this', 'and this too', 'scratch that'], 'strict', state)
+  assert.equal(render(state.atoms), 'keep this.')
 })
 
-test('scratch that also clears words said in the same burst', () => {
-  assert.equal(written(['keep this full stop', 'remove this scratch that']), 'keep this.')
+test('scratch that clears the run even when said in the middle of a burst', () => {
+  let state = dictate(['keep this full stop'])
+  state = startDictationRun(state)
+  state = dictate(['remove this scratch that'], 'strict', state)
+  assert.equal(render(state.atoms), 'keep this.')
+})
+
+test('with no run started, scratch that takes back the whole dictation', () => {
+  // A fresh state starts its run at the first atom, so a student who has
+  // never touched the microphone control still gets the obvious behaviour.
+  assert.equal(written(['alpha beta', 'gamma delta', 'scratch that']), '')
+})
+
+test('a new run narrows what scratch that will reach', () => {
+  let state = dictate(['first run'])
+  state = startDictationRun(state)
+  state = dictate(['second run'], 'strict', state)
+  state = startDictationRun(state)
+  state = dictate(['third run', 'scratch that'], 'strict', state)
+  assert.equal(render(state.atoms), 'first run second run')
+})
+
+test('the interface can ask how much scratch that would remove', () => {
+  let state = dictate(['already safe'])
+  state = startDictationRun(state)
+  assert.equal(scratchScope(state), 0)
+  state = dictate(['four more words here'], 'strict', state)
+  assert.equal(scratchScope(state), 4)
 })
 
 test('delete last word and delete last sentence', () => {
